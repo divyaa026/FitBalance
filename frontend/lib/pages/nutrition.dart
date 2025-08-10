@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:provider/provider.dart';
 import '../providers/nutrition_provider.dart';
-import '../widgets/camera_preview.dart';
 import '../widgets/protein_gauge.dart';
 import '../widgets/shap_explanation_bubble.dart';
 import '../widgets/food_detection_overlay.dart';

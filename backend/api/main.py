@@ -4,11 +4,8 @@ from fastapi.responses import JSONResponse
 import uvicorn
 from typing import List, Optional
 import logging
-
-# Import core modules
-from modules.biomechanics import BiomechanicsCoach
-from modules.nutrition import ProteinOptimizer
-from modules.burnout import BurnoutPredictor
+import json
+import time
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -29,10 +26,99 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize core modules
-biomechanics_coach = BiomechanicsCoach()
-protein_optimizer = ProteinOptimizer()
-burnout_predictor = BurnoutPredictor()
+# Mock implementations for development
+class MockBiomechanicsCoach:
+    async def analyze_movement(self, video_file, exercise_type, user_id):
+        # Simulate processing time
+        time.sleep(1)
+        return {
+            "form_score": 85.5,
+            "joint_angles": [
+                {"joint_name": "knee", "angle": 95.2, "is_abnormal": True},
+                {"joint_name": "hip", "angle": 85.1, "is_abnormal": False}
+            ],
+            "torques": [
+                {"joint_name": "knee", "torque_magnitude": 45.2, "risk_level": "medium"}
+            ],
+            "recommendations": ["Keep knees aligned with toes", "Maintain proper hip hinge"],
+            "exercise_type": exercise_type,
+            "user_id": user_id
+        }
+    
+    async def generate_heatmap(self, user_id, exercise_type):
+        return {
+            "heatmap_data": "mock_heatmap_data",
+            "user_id": user_id,
+            "exercise_type": exercise_type
+        }
+
+class MockProteinOptimizer:
+    async def analyze_meal(self, meal_photo, user_id, dietary_restrictions):
+        # Simulate processing time
+        time.sleep(1)
+        return {
+            "total_protein": 32.3,
+            "total_calories": 436,
+            "detected_foods": [
+                {"name": "grilled_chicken", "protein_content": 25.0, "confidence": 0.92},
+                {"name": "brown_rice", "protein_content": 4.5, "confidence": 0.88}
+            ],
+            "meal_quality_score": 85.0,
+            "recommendations": ["Great protein content!", "Consider adding healthy fats"],
+            "user_id": user_id
+        }
+    
+    async def get_recommendations(self, user_id, target_protein, activity_level):
+        return {
+            "recommendations": [
+                "Aim for 1.6g protein per kg body weight",
+                "Include protein in every meal",
+                "Consider protein timing around workouts"
+            ],
+            "target_protein": target_protein or 120,
+            "activity_level": activity_level
+        }
+
+class MockBurnoutPredictor:
+    async def analyze_risk(self, user_id, workout_frequency, sleep_hours, stress_level, recovery_time, performance_trend):
+        # Calculate mock risk score
+        risk_score = (stress_level * 10) + (10 - sleep_hours) * 5 + (7 - workout_frequency) * 3
+        risk_score = min(max(risk_score, 0), 100)
+        
+        return {
+            "risk_score": risk_score,
+            "risk_level": "high" if risk_score > 70 else "medium" if risk_score > 40 else "low",
+            "time_to_burnout": 45.0 if risk_score > 70 else 90.0,
+            "survival_probability": 0.35 if risk_score > 70 else 0.65,
+            "risk_factors": ["High stress levels", "Poor sleep quality", "Excessive workload"],
+            "recommendations": [
+                "Implement stress management techniques",
+                "Improve sleep hygiene",
+                "Consider workload reduction"
+            ]
+        }
+    
+    async def generate_survival_curve(self, user_id):
+        return {
+            "time_points": list(range(0, 365, 7)),
+            "survival_probabilities": [0.95 - i * 0.001 for i in range(0, 365, 7)],
+            "user_id": user_id
+        }
+    
+    async def get_recommendations(self, user_id):
+        return {
+            "recommendations": [
+                "Take regular breaks during work",
+                "Practice mindfulness meditation",
+                "Maintain work-life balance",
+                "Get adequate sleep (7-9 hours)"
+            ]
+        }
+
+# Initialize mock modules
+biomechanics_coach = MockBiomechanicsCoach()
+protein_optimizer = MockProteinOptimizer()
+burnout_predictor = MockBurnoutPredictor()
 
 @app.get("/")
 async def root():
@@ -43,16 +129,17 @@ async def root():
             "biomechanics-coaching",
             "protein-optimization", 
             "burnout-prediction"
-        ]
+        ],
+        "status": "running_with_mock_data"
     }
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "modules": {
-        "biomechanics": "active",
-        "nutrition": "active", 
-        "burnout": "active"
+        "biomechanics": "active (mock)",
+        "nutrition": "active (mock)", 
+        "burnout": "active (mock)"
     }}
 
 # Biomechanics Coaching Endpoints

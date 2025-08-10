@@ -1,4 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'pages/nutrition.dart';
+import 'pages/biomechanics.dart';
+import 'pages/burnout.dart';
+import 'providers/nutrition_provider.dart';
+import 'providers/biomechanics_provider.dart';
+import 'providers/burnout_provider.dart';
 
 void main() {
   runApp(FitBalanceApp());
@@ -7,13 +14,20 @@ void main() {
 class FitBalanceApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'FitBalance',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        visualDensity: VisualDensity.adaptivePlatformDensity,
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => NutritionProvider()),
+        ChangeNotifierProvider(create: (_) => BiomechanicsProvider()),
+        ChangeNotifierProvider(create: (_) => BurnoutProvider()),
+      ],
+      child: MaterialApp(
+        title: 'FitBalance',
+        theme: ThemeData(
+          primarySwatch: Colors.blue,
+          visualDensity: VisualDensity.adaptivePlatformDensity,
+        ),
+        home: FitBalanceHomePage(),
       ),
-      home: FitBalanceHomePage(),
     );
   }
 }
@@ -27,9 +41,9 @@ class _FitBalanceHomePageState extends State<FitBalanceHomePage> {
   int _selectedIndex = 0;
 
   final List<Widget> _pages = [
-    BiomechanicsPage(),
-    NutritionPage(),
-    BurnoutPage(),
+    BiomechanicsPage(), // Now using the proper BiomechanicsPage with backend integration
+    NutritionPage(), // Now using the proper NutritionPage with backend integration
+    BurnoutPage(), // Now using the proper BurnoutPage with backend integration
     ProfilePage(),
   ];
 
@@ -72,89 +86,11 @@ class _FitBalanceHomePageState extends State<FitBalanceHomePage> {
   }
 }
 
-class BiomechanicsPage extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.fitness_center, size: 100, color: Colors.blue),
-          SizedBox(height: 20),
-          Text(
-            'Biomechanics Analysis',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-          ),
-          SizedBox(height: 10),
-          Text('Real-time movement analysis with AI'),
-          SizedBox(height: 30),
-          ElevatedButton(
-            onPressed: () {
-              // TODO: Implement video recording and analysis
-            },
-            child: Text('Record Exercise'),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
-class NutritionPage extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.restaurant, size: 100, color: Colors.green),
-          SizedBox(height: 20),
-          Text(
-            'Nutrition Analysis',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-          ),
-          SizedBox(height: 10),
-          Text('AI-powered meal analysis and recommendations'),
-          SizedBox(height: 30),
-          ElevatedButton(
-            onPressed: () {
-              // TODO: Implement photo capture and analysis
-            },
-            child: Text('Analyze Meal'),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
-class BurnoutPage extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.psychology, size: 100, color: Colors.orange),
-          SizedBox(height: 20),
-          Text(
-            'Burnout Prediction',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-          ),
-          SizedBox(height: 10),
-          Text('AI-powered burnout risk assessment'),
-          SizedBox(height: 30),
-          ElevatedButton(
-            onPressed: () {
-              // TODO: Implement burnout assessment
-            },
-            child: Text('Assess Risk'),
-          ),
-        ],
-      ),
-    );
-  }
-}
+
+
+
 
 class ProfilePage extends StatelessWidget {
   @override
