@@ -266,7 +266,7 @@ class _ShapExplanationBubbleState extends State<ShapExplanationBubble>
                 ),
               ),
               Text(
-                '${(feature['importance'] as double * 100).toStringAsFixed(0)}%',
+                '${((feature['importance'] as double) * 100).toStringAsFixed(0)}%',
                 style: TextStyle(
                   color: Colors.purple[600],
                   fontWeight: FontWeight.bold,

@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 
-class CameraPreview extends StatelessWidget {
+class CustomCameraPreview extends StatelessWidget {
   final CameraController controller;
   final VoidCallback? onTap;
 
-  const CameraPreview({
+  const CustomCameraPreview({
     Key? key,
     required this.controller,
     this.onTap,
