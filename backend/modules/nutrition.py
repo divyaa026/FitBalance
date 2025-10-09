@@ -1,6 +1,6 @@
 """
-Nutrition Module
-Dynamic protein optimization using meal photos with CNN-GRU architecture
+Enhanced Nutrition Module
+Complete protein optimization system with CNN Food Classification, GRU Time-Series Learning, and SHAP Explainability
 """
 
 import torch
@@ -16,9 +16,21 @@ import logging
 from dataclasses import dataclass
 from fastapi import UploadFile
 import json
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 logger = logging.getLogger(__name__)
+
+# Import our enhanced ML models
+try:
+    from ml_models.nutrition.cnn_food_classifier import FoodClassifierInference, FoodDetection
+    from ml_models.nutrition.gru_protein_optimizer import ProteinOptimizer as GRUProteinOptimizer, HealthMetrics
+    from ml_models.nutrition.shap_explainer import initialize_shap_explainer
+    from backend.database.nutrition_db import nutrition_db
+    from backend.integrations.health_apis import health_aggregator, create_demo_health_data
+    ENHANCED_MODE = True
+except ImportError as e:
+    logger.warning(f"Could not import enhanced modules: {e}. Using fallback implementations.")
+    ENHANCED_MODE = False
 
 @dataclass
 class FoodItem:
@@ -101,16 +113,400 @@ class CNNGRUModel(nn.Module):
         return classification, nutritional_values
 
 class ProteinOptimizer:
-    """Main class for protein optimization and meal analysis"""
+    """Enhanced protein optimization system with CNN, GRU, and SHAP explainability"""
     
     def __init__(self):
-        self.model = CNNGRUModel()
-        self.food_database = self._load_food_database()
-        self.user_profiles = {}  # In production, use database
-        self.meal_history = {}  # In production, use database
+        # Initialize components based on available modules
+        if ENHANCED_MODE:
+            self.food_classifier = FoodClassifierInference()
+            self.gru_optimizer = GRUProteinOptimizer()
+            self.shap_explainer = initialize_shap_explainer(self.gru_optimizer)
+            self.database = nutrition_db
+            logger.info("Enhanced nutrition system initialized")
+        else:
+            # Fallback to original implementation
+            self.model = CNNGRUModel()
+            self.food_database = self._load_food_database()
+            self.user_profiles = {}
+            self.meal_history = {}
+            self._load_model()
+            logger.info("Fallback nutrition system initialized")
+    
+    async def analyze_meal_enhanced(self, meal_photo: UploadFile, user_id: str, 
+                                  dietary_restrictions: List[str]) -> Dict:
+        """Enhanced meal analysis using CNN Food Classifier"""
+        try:
+            if not ENHANCED_MODE:
+                return await self.analyze_meal(meal_photo, user_id, dietary_restrictions)
+            
+            # Save image temporarily
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_file:
+                content = await meal_photo.read()
+                tmp_file.write(content)
+                image_path = tmp_file.name
+            
+            # Use enhanced CNN food classifier
+            analysis_result = self.food_classifier.analyze_meal_image(image_path)
+            detections = analysis_result['detections']
+            
+            # Get user health data for protein optimization
+            health_data = await self._get_user_health_data(user_id)
+            
+            # Generate protein recommendation using GRU
+            if health_data:
+                protein_recommendation = self.gru_optimizer.optimize_protein_intake(user_id, health_data)
+                
+                # Generate SHAP explanation
+                shap_explanation = None
+                if self.shap_explainer and health_data:
+                    shap_explanation = self.shap_explainer.explain_recommendation(
+                        health_data[-1], user_id
+                    )
+            else:
+                # Fallback to basic recommendation
+                protein_recommendation = None
+                shap_explanation = None
+            
+            # Calculate nutritional analysis
+            total_protein = analysis_result['total_protein']
+            total_calories = analysis_result['total_calories']
+            
+            # Determine protein deficit
+            target_protein = protein_recommendation.adjusted_protein if protein_recommendation else 120.0
+            protein_deficit = max(0, target_protein - total_protein)
+            
+            # Generate recommendations
+            recommendations = self._generate_enhanced_recommendations(
+                detections, protein_deficit, dietary_restrictions, protein_recommendation
+            )
+            
+            # Calculate meal quality score
+            meal_quality_score = self._calculate_enhanced_meal_quality(
+                detections, total_protein, total_calories, target_protein
+            )
+            
+            # Store meal data in database
+            if self.database:
+                detected_foods_dict = {
+                    str(i): {
+                        'name': det.food_class,
+                        'protein': det.protein_content,
+                        'calories': det.calories,
+                        'portion': det.portion_grams
+                    } for i, det in enumerate(detections)
+                }
+                
+                self.database.log_meal(
+                    user_id=int(user_id) if user_id.isdigit() else 1,
+                    image_path=image_path,
+                    detected_foods=detected_foods_dict,
+                    total_protein=total_protein,
+                    total_calories=total_calories,
+                    confidence=analysis_result['confidence']
+                )
+            
+            # Clean up
+            os.unlink(image_path)
+            
+            # Prepare response
+            response = {
+                'total_protein': total_protein,
+                'total_calories': total_calories,
+                'detected_foods': [
+                    {
+                        'name': det.food_class.replace('_', ' ').title(),
+                        'confidence': det.confidence,
+                        'protein_content': det.protein_content,
+                        'calories': det.calories,
+                        'portion_grams': det.portion_grams,
+                        'bounding_box': det.bounding_box
+                    } for det in detections
+                ],
+                'protein_deficit': protein_deficit,
+                'target_protein': target_protein,
+                'recommendations': recommendations,
+                'meal_quality_score': meal_quality_score,
+                'protein_optimization': {
+                    'baseline_protein': protein_recommendation.baseline_protein if protein_recommendation else target_protein,
+                    'adjusted_protein': protein_recommendation.adjusted_protein if protein_recommendation else target_protein,
+                    'sleep_factor': protein_recommendation.sleep_factor if protein_recommendation else 1.0,
+                    'hrv_factor': protein_recommendation.hrv_factor if protein_recommendation else 1.0,
+                    'activity_factor': protein_recommendation.activity_factor if protein_recommendation else 1.0,
+                    'confidence': protein_recommendation.confidence if protein_recommendation else 0.8,
+                    'explanation': protein_recommendation.explanation if protein_recommendation else "Using baseline recommendation"
+                },
+                'shap_explanation': {
+                    'feature_importance': shap_explanation.feature_importance if shap_explanation else {},
+                    'explanation_text': shap_explanation.explanation_text if shap_explanation else "Basic nutrition analysis",
+                    'confidence_score': shap_explanation.confidence_score if shap_explanation else 0.7
+                }
+            }
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Enhanced meal analysis error: {str(e)}")
+            # Fallback to original method
+            return await self.analyze_meal(meal_photo, user_id, dietary_restrictions)
+    
+    async def _get_user_health_data(self, user_id: str, days: int = 7) -> Optional[List[HealthMetrics]]:
+        """Get user health data for protein optimization"""
+        try:
+            if not ENHANCED_MODE:
+                return None
+            
+            # Try to get real health data from APIs
+            historical_data = await health_aggregator.get_historical_data(user_id, days)
+            
+            if not historical_data:
+                # Generate demo data for testing
+                from backend.integrations.health_apis import get_demo_historical_data
+                historical_data = get_demo_historical_data(days)
+            
+            # Convert to HealthMetrics format
+            health_metrics = []
+            for data_point in historical_data:
+                health_metric = HealthMetrics(
+                    date=datetime.combine(data_point.date, datetime.min.time()),
+                    sleep_duration=data_point.sleep_duration or 7.5,
+                    sleep_quality=data_point.sleep_quality or 7.0,
+                    hrv=data_point.hrv or 45.0,
+                    activity_level=data_point.activity_score or 5.0,
+                    stress_level=int(data_point.stress_level or 4),
+                    protein_intake=0.0,  # Will be filled from meal logs
+                    recovery_score=data_point.recovery_score or 7.0
+                )
+                health_metrics.append(health_metric)
+            
+            return health_metrics
+            
+        except Exception as e:
+            logger.error(f"Health data retrieval failed: {e}")
+            return None
+    
+    def _generate_enhanced_recommendations(self, detections: List, protein_deficit: float,
+                                        dietary_restrictions: List[str], 
+                                        protein_recommendation=None) -> List[str]:
+        """Generate enhanced nutrition recommendations"""
+        recommendations = []
         
-        # Load pre-trained model (placeholder)
-        self._load_model()
+        if protein_deficit > 10:
+            recommendations.append(f"Add {protein_deficit:.1f}g more protein to reach your optimized target")
+            
+            # Suggest specific high-protein foods based on dietary restrictions
+            suitable_foods = self._get_suitable_protein_foods(dietary_restrictions)
+            if suitable_foods:
+                recommendations.append(f"Consider adding: {', '.join(suitable_foods[:3])}")
+        
+        # Add personalized recommendations based on health data
+        if protein_recommendation:
+            if protein_recommendation.sleep_factor > 1.1:
+                recommendations.append("Poor sleep quality detected - protein needs increased for recovery")
+            if protein_recommendation.activity_factor > 1.2:
+                recommendations.append("High activity level - increased protein for muscle repair")
+            if protein_recommendation.hrv_factor > 1.1:
+                recommendations.append("Elevated stress levels - additional protein for immune support")
+        
+        # Food variety recommendations
+        food_categories = set()
+        for detection in detections:
+            if hasattr(detection, 'food_class'):
+                food_categories.add(self._get_food_category(detection.food_class))
+        
+        if len(food_categories) < 3:
+            recommendations.append("Try to include more food variety for complete nutrition")
+        
+        # Timing recommendations
+        current_hour = datetime.now().hour
+        if 6 <= current_hour <= 10:
+            recommendations.append("Great breakfast choice! Consider adding protein for sustained energy")
+        elif 11 <= current_hour <= 14:
+            recommendations.append("Lunch looks good! Include protein for afternoon productivity")
+        elif current_hour >= 18:
+            recommendations.append("Evening meal - moderate protein for overnight recovery")
+        
+        return recommendations
+    
+    def _get_suitable_protein_foods(self, dietary_restrictions: List[str]) -> List[str]:
+        """Get protein foods suitable for dietary restrictions"""
+        all_protein_foods = {
+            'chicken breast', 'salmon', 'eggs', 'greek yogurt', 'tofu', 
+            'quinoa', 'beans', 'almonds', 'tuna', 'cottage cheese'
+        }
+        
+        restrictions_lower = [r.lower() for r in dietary_restrictions]
+        
+        # Filter based on restrictions
+        if 'vegetarian' in restrictions_lower:
+            all_protein_foods.discard('chicken breast')
+            all_protein_foods.discard('salmon')
+            all_protein_foods.discard('tuna')
+        
+        if 'vegan' in restrictions_lower:
+            all_protein_foods.discard('chicken breast')
+            all_protein_foods.discard('salmon')
+            all_protein_foods.discard('eggs')
+            all_protein_foods.discard('greek yogurt')
+            all_protein_foods.discard('tuna')
+            all_protein_foods.discard('cottage cheese')
+        
+        if 'dairy-free' in restrictions_lower or 'lactose-free' in restrictions_lower:
+            all_protein_foods.discard('greek yogurt')
+            all_protein_foods.discard('cottage cheese')
+        
+        if 'nut-free' in restrictions_lower:
+            all_protein_foods.discard('almonds')
+        
+        return list(all_protein_foods)
+    
+    def _get_food_category(self, food_name: str) -> str:
+        """Get food category for variety analysis"""
+        protein_foods = {'chicken', 'salmon', 'tuna', 'eggs', 'tofu', 'beans'}
+        grain_foods = {'quinoa', 'rice', 'oats', 'bread'}
+        vegetable_foods = {'broccoli', 'spinach', 'carrot'}
+        dairy_foods = {'yogurt', 'cheese', 'milk'}
+        
+        food_lower = food_name.lower()
+        
+        for protein in protein_foods:
+            if protein in food_lower:
+                return 'protein'
+        
+        for grain in grain_foods:
+            if grain in food_lower:
+                return 'grain'
+        
+        for vegetable in vegetable_foods:
+            if vegetable in food_lower:
+                return 'vegetable'
+        
+        for dairy in dairy_foods:
+            if dairy in food_lower:
+                return 'dairy'
+        
+        return 'other'
+    
+    def _calculate_enhanced_meal_quality(self, detections: List, total_protein: float,
+                                       total_calories: float, target_protein: float) -> float:
+        """Calculate enhanced meal quality score"""
+        score = 0.0
+        
+        # Protein adequacy (40 points)
+        protein_ratio = total_protein / target_protein if target_protein > 0 else 0
+        if 0.8 <= protein_ratio <= 1.2:
+            score += 40
+        elif 0.6 <= protein_ratio <= 1.4:
+            score += 30
+        else:
+            score += 20
+        
+        # Food variety (30 points)
+        unique_categories = len(set(self._get_food_category(
+            det.food_class if hasattr(det, 'food_class') else str(det)
+        ) for det in detections))
+        score += min(unique_categories * 10, 30)
+        
+        # Nutritional balance (20 points)
+        if len(detections) >= 3:  # Multiple food items
+            score += 20
+        elif len(detections) == 2:
+            score += 15
+        else:
+            score += 10
+        
+        # Portion appropriateness (10 points)
+        if 300 <= total_calories <= 800:  # Reasonable meal size
+            score += 10
+        elif 200 <= total_calories <= 1000:
+            score += 8
+        else:
+            score += 5
+        
+        return min(100.0, score)
+    
+    async def get_enhanced_recommendations(self, user_id: str, target_protein: Optional[float] = None,
+                                         activity_level: str = "moderate") -> Dict:
+        """Get enhanced personalized nutrition recommendations"""
+        try:
+            if not ENHANCED_MODE:
+                return await self.get_recommendations(user_id, target_protein, activity_level)
+            
+            # Get user health data
+            health_data = await self._get_user_health_data(user_id)
+            
+            if health_data:
+                # Use GRU optimizer for personalized recommendation
+                protein_recommendation = self.gru_optimizer.optimize_protein_intake(user_id, health_data)
+                
+                # Generate SHAP explanation
+                shap_explanation = None
+                if self.shap_explainer:
+                    shap_explanation = self.shap_explainer.explain_recommendation(
+                        health_data[-1], user_id
+                    )
+                
+                # Get recent meal history
+                recent_meals = []
+                if self.database:
+                    recent_meals = self.database.get_recent_meals(int(user_id) if user_id.isdigit() else 1)
+                
+                # Calculate current nutrition status
+                recent_protein = sum(meal.get('total_protein', 0) for meal in recent_meals[-3:])
+                avg_protein = recent_protein / max(len(recent_meals[-3:]), 1)
+                
+                recommendations = []
+                
+                # Protein recommendations
+                protein_gap = protein_recommendation.adjusted_protein - avg_protein
+                if protein_gap > 10:
+                    recommendations.append(f"Increase daily protein by {protein_gap:.1f}g")
+                elif protein_gap < -10:
+                    recommendations.append(f"Current protein intake is {abs(protein_gap):.1f}g above optimal")
+                else:
+                    recommendations.append("Current protein intake is well-optimized")
+                
+                # Health-based recommendations
+                latest_health = health_data[-1]
+                if latest_health.sleep_quality < 7:
+                    recommendations.append("Poor sleep detected - consider protein timing for better recovery")
+                if latest_health.activity_level > 7:
+                    recommendations.append("High activity - ensure post-workout protein within 2 hours")
+                if latest_health.hrv < 40:
+                    recommendations.append("Low HRV indicates stress - protein supports immune function")
+                
+                return {
+                    'user_id': user_id,
+                    'recommended_protein': protein_recommendation.adjusted_protein,
+                    'baseline_protein': protein_recommendation.baseline_protein,
+                    'current_average_protein': avg_protein,
+                    'optimization_factors': {
+                        'sleep_factor': protein_recommendation.sleep_factor,
+                        'hrv_factor': protein_recommendation.hrv_factor,
+                        'activity_factor': protein_recommendation.activity_factor,
+                        'confidence': protein_recommendation.confidence
+                    },
+                    'recommendations': recommendations,
+                    'explanation': protein_recommendation.explanation,
+                    'shap_explanation': {
+                        'feature_importance': shap_explanation.feature_importance if shap_explanation else {},
+                        'explanation_text': shap_explanation.explanation_text if shap_explanation else "",
+                        'confidence_score': shap_explanation.confidence_score if shap_explanation else 0.0
+                    },
+                    'health_metrics': {
+                        'sleep_quality': latest_health.sleep_quality,
+                        'hrv': latest_health.hrv,
+                        'activity_level': latest_health.activity_level,
+                        'recovery_score': latest_health.recovery_score
+                    },
+                    'recent_meals': len(recent_meals)
+                }
+            else:
+                # Fallback to basic recommendations
+                return await self.get_recommendations(user_id, target_protein, activity_level)
+                
+        except Exception as e:
+            logger.error(f"Enhanced recommendations error: {str(e)}")
+            return await self.get_recommendations(user_id, target_protein, activity_level)
     
     def _load_food_database(self) -> Dict:
         """Load food database with nutritional information"""
