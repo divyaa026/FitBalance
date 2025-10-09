@@ -6,14 +6,29 @@ __pycache__/
 
 # Virtual Environment
 venv/
+fitbalance_env/
 .env
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.eslintcache
 
 # IDEs
 .idea/
 *.sublime-*
+.vscode/
 
 # Large dataset files
 biomechanics_dataset_large.json
 biomechanics_dataset_large.csv
 *.json[large]
 *.csv[large]
+
+# Temporary files
+*.tmp
+*.temp
+resolve_conflicts.md
