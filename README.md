@@ -89,14 +89,38 @@ ENABLE_NUTRITION=True
 ENABLE_BURNOUT=True
 ```
 
-### 5. Run the Application
+### 5. Run the Backend
 ```bash
-cd backend/api
-python main.py
+# Start the FastAPI backend server
+python start_server.py
 ```
 
 The API will be available at `http://localhost:8000`
 
+### 6. Run the Frontend
+```bash
+# Navigate to frontend directory
+cd frontend
+
+# Install dependencies (first time only)
+npm install
+
+# Start the development server
+npm run dev
+```
+
+The frontend will be available at `http://localhost:8080`
+
+## 🖥️ Frontend Technology Stack
+
+- **React 18**: Modern React with hooks and functional components
+- **TypeScript**: Type-safe development with excellent IDE support
+- **Vite**: Lightning-fast build tool and development server
+- **Shadcn/UI**: Beautiful, accessible component library
+- **Tailwind CSS**: Utility-first CSS framework for rapid styling
+- **Lucide Icons**: Beautiful, customizable SVG icons
+- **React Query**: Powerful data fetching and state management
+- **React Router**: Client-side routing for single-page application
 ## 📚 API Documentation
 
 ### Biomechanics Endpoints
