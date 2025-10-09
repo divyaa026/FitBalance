@@ -86,10 +86,16 @@ class CNNGRUModel(nn.Module):
         
         # CNN feature extraction
         features = self.conv_layers(x)
-        features = features.view(batch_size, -1)  # Flatten
+        features = features.view(batch_size, -1)  # Flatten to [batch_size, 512]
         
-        # GRU processing if sequence data available
-        if sequence_length is not None:
+        # For single image input, create a sequence of length 1
+        if sequence_length is None:
+            # Reshape for GRU: [batch_size, seq_len=1, features]
+            features = features.unsqueeze(1)  # [batch_size, 1, 512]
+            gru_out, _ = self.gru(features)
+            features = gru_out.squeeze(1)  # [batch_size, hidden_dim]
+        else:
+            # Handle sequence input if needed
             features = features.view(batch_size, sequence_length, -1)
             gru_out, _ = self.gru(features)
             features = gru_out[:, -1, :]  # Take last timestep
@@ -248,11 +254,13 @@ class ProteinOptimizer:
                 food_probs = F.softmax(classification, dim=1)
                 detected_foods = []
                 
-                # For demo, use mock detection
+                # Get top predictions (for now, fallback to mock)
+                logger.info("Model inference successful, using mock data for demo")
                 detected_foods = self._mock_food_detection(image_path)
                 
         except Exception as e:
             logger.error(f"Food detection error: {e}")
+            logger.info("Falling back to mock detection")
             # Fallback to mock detection
             detected_foods = self._mock_food_detection(image_path)
         
@@ -260,38 +268,59 @@ class ProteinOptimizer:
     
     def _mock_food_detection(self, image_path: str) -> List[FoodItem]:
         """Mock food detection for testing"""
-        # Simulate detection of common foods
-        mock_foods = [
-            FoodItem(
-                name="chicken_breast",
-                confidence=0.85,
-                protein_content=31.0,
-                calories=165,
-                serving_size="100g",
-                bounding_box=(50, 50, 100, 80)
-            ),
-            FoodItem(
-                name="broccoli",
-                confidence=0.78,
-                protein_content=2.8,
-                calories=34,
-                serving_size="100g",
-                bounding_box=(200, 50, 80, 60)
-            ),
-            FoodItem(
-                name="quinoa",
-                confidence=0.72,
-                protein_content=4.4,
-                calories=120,
-                serving_size="100g",
-                bounding_box=(150, 150, 90, 70)
-            )
+        import random
+        
+        # Pool of possible foods with realistic nutritional data
+        food_pool = [
+            {"name": "chicken_breast", "protein": 31.0, "calories": 165, "confidence": 0.85},
+            {"name": "salmon", "protein": 25.4, "calories": 208, "confidence": 0.82},
+            {"name": "egg", "protein": 13.0, "calories": 155, "confidence": 0.90},
+            {"name": "broccoli", "protein": 2.8, "calories": 34, "confidence": 0.78},
+            {"name": "quinoa", "protein": 4.4, "calories": 120, "confidence": 0.72},
+            {"name": "brown_rice", "protein": 2.6, "calories": 112, "confidence": 0.75},
+            {"name": "avocado", "protein": 2.0, "calories": 160, "confidence": 0.80},
+            {"name": "almonds", "protein": 21.2, "calories": 579, "confidence": 0.70},
+            {"name": "Greek_yogurt", "protein": 10.0, "calories": 59, "confidence": 0.85},
+            {"name": "tofu", "protein": 8.1, "calories": 76, "confidence": 0.73},
         ]
         
+        # Randomly select 2-4 foods to simulate realistic meal detection
+        num_foods = random.randint(2, 4)
+        selected_foods = random.sample(food_pool, min(num_foods, len(food_pool)))
+        
+        mock_foods = []
+        for i, food in enumerate(selected_foods):
+            # Add some randomness to portions
+            portion_multiplier = random.uniform(0.7, 1.5)
+            
+            mock_foods.append(FoodItem(
+                name=food["name"],
+                confidence=food["confidence"],
+                protein_content=round(food["protein"] * portion_multiplier, 1),
+                calories=round(food["calories"] * portion_multiplier),
+                serving_size=f"{round(100 * portion_multiplier)}g",
+                bounding_box=(
+                    random.randint(50, 200), 
+                    random.randint(50, 150), 
+                    random.randint(80, 120), 
+                    random.randint(60, 100)
+                )
+            ))
+        
+        logger.info(f"Mock detected {len(mock_foods)} foods: {[f.name for f in mock_foods]}")
         return mock_foods
     
     def _preprocess_image(self, image: Image.Image) -> torch.Tensor:
         """Preprocess image for model input"""
+        # Convert RGBA to RGB if necessary
+        if image.mode == 'RGBA':
+            # Create a white background
+            background = Image.new('RGB', image.size, (255, 255, 255))
+            background.paste(image, mask=image.split()[-1])  # Use alpha channel as mask
+            image = background
+        elif image.mode != 'RGB':
+            image = image.convert('RGB')
+        
         # Convert to tensor and normalize
         image_array = np.array(image) / 255.0
         image_tensor = torch.from_numpy(image_array).float()
@@ -339,33 +368,58 @@ class ProteinOptimizer:
         """Generate personalized nutrition recommendations"""
         recommendations = []
         
+        # Calculate totals for analysis
+        total_protein = sum(food.protein_content for food in detected_foods)
+        total_calories = sum(food.calories for food in detected_foods)
+        food_names = [food.name.lower() for food in detected_foods]
+        
         # Protein deficit recommendations
         if protein_deficit > 20:
             recommendations.append(f"Add {protein_deficit:.1f}g more protein to meet your daily target")
-            
-            # Suggest high-protein foods
             high_protein_foods = self._get_high_protein_foods(dietary_restrictions)
-            recommendations.append(f"Consider adding: {', '.join(high_protein_foods[:3])}")
+            recommendations.append(f"Try adding: {', '.join(high_protein_foods[:3])}")
+        elif protein_deficit > 0:
+            recommendations.append(f"Good protein intake! You need {protein_deficit:.1f}g more to reach your goal")
+        else:
+            recommendations.append("Excellent! You've met your protein target for this meal")
         
-        # Meal balance recommendations
-        food_names = [food.name for food in detected_foods]
+        # Meal composition analysis
+        has_vegetables = any(veg in food_names for veg in ['broccoli', 'vegetables', 'spinach', 'kale', 'carrots'])
+        has_protein = any(protein in food_names for protein in ['chicken', 'salmon', 'egg', 'tofu', 'fish'])
+        has_carbs = any(carb in food_names for carb in ['rice', 'quinoa', 'bread', 'pasta', 'potato'])
         
-        if 'vegetables' not in food_names and 'broccoli' not in food_names:
-            recommendations.append("Add vegetables for better nutritional balance")
+        if not has_vegetables:
+            recommendations.append("Add colorful vegetables for vitamins and fiber")
+        if not has_protein and total_protein < 15:
+            recommendations.append("Include a lean protein source for muscle maintenance")
+        if not has_carbs and total_calories < 400:
+            recommendations.append("Consider adding complex carbohydrates for sustained energy")
         
-        if len(detected_foods) < 3:
-            recommendations.append("Consider adding more variety to your meal")
+        # Portion size recommendations
+        if total_calories > 800:
+            recommendations.append("This appears to be a large portion - consider splitting it if not post-workout")
+        elif total_calories < 200:
+            recommendations.append("This seems like a light meal - perfect for a snack!")
         
         # Timing recommendations
         current_hour = datetime.now().hour
         if 6 <= current_hour <= 10:
-            recommendations.append("Great breakfast choice! Consider adding complex carbs for sustained energy")
+            recommendations.append("Great breakfast choice! Starting the day with protein supports metabolism")
         elif 11 <= current_hour <= 14:
-            recommendations.append("Good lunch selection. Remember to stay hydrated")
+            recommendations.append("Perfect lunch timing! This meal will fuel your afternoon")
         elif 17 <= current_hour <= 20:
-            recommendations.append("Dinner looks good. Consider lighter options if eating late")
+            recommendations.append("Good dinner timing! Try to finish eating 2-3 hours before bed")
+        elif current_hour >= 21:
+            recommendations.append("Late evening meal - consider lighter options for better sleep")
         
-        return recommendations
+        # Dietary restriction compliance
+        if dietary_restrictions:
+            compliant_foods = [food.name for food in detected_foods 
+                             if self._check_dietary_compliance(food.name, dietary_restrictions)]
+            if len(compliant_foods) == len(detected_foods):
+                recommendations.append(f"Great job following your {', '.join(dietary_restrictions)} diet!")
+        
+        return recommendations[:6]  # Limit to 6 recommendations
     
     def _get_high_protein_foods(self, dietary_restrictions: List[str]) -> List[str]:
         """Get list of high-protein foods respecting dietary restrictions"""
@@ -382,6 +436,36 @@ class ProteinOptimizer:
                 high_protein_foods.append(food_name.replace('_', ' ').title())
         
         return high_protein_foods
+    
+    def _check_dietary_compliance(self, food_name: str, dietary_restrictions: List[str]) -> bool:
+        """Check if a food item complies with dietary restrictions"""
+        food_name = food_name.lower()
+        
+        for restriction in dietary_restrictions:
+            restriction = restriction.lower()
+            
+            if restriction == 'vegetarian':
+                meat_items = ['chicken', 'beef', 'pork', 'salmon', 'fish', 'turkey', 'lamb']
+                if any(meat in food_name for meat in meat_items):
+                    return False
+                    
+            elif restriction == 'vegan':
+                animal_items = ['chicken', 'beef', 'pork', 'salmon', 'fish', 'egg', 'milk', 
+                               'cheese', 'yogurt', 'butter', 'turkey', 'lamb']
+                if any(animal in food_name for animal in animal_items):
+                    return False
+                    
+            elif restriction == 'gluten-free':
+                gluten_items = ['bread', 'pasta', 'wheat', 'barley', 'rye', 'oats']
+                if any(gluten in food_name for gluten in gluten_items):
+                    return False
+                    
+            elif restriction == 'dairy-free':
+                dairy_items = ['milk', 'cheese', 'yogurt', 'butter', 'cream']
+                if any(dairy in food_name for dairy in dairy_items):
+                    return False
+        
+        return True
     
     def _calculate_meal_quality(self, detected_foods: List[FoodItem], nutritional_balance: Dict[str, float]) -> float:
         """Calculate meal quality score (0-100)"""

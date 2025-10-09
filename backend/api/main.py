@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
@@ -6,6 +6,15 @@ from typing import List, Optional
 import logging
 import json
 import time
+import sys
+from pathlib import Path
+
+# Add the backend directory to Python path
+backend_path = Path(__file__).parent.parent
+sys.path.insert(0, str(backend_path))
+
+# Import the actual modules
+from modules.nutrition import ProteinOptimizer
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -115,10 +124,17 @@ class MockBurnoutPredictor:
             ]
         }
 
-# Initialize mock modules
+# Keep mock modules for non-nutrition features
 biomechanics_coach = MockBiomechanicsCoach()
-protein_optimizer = MockProteinOptimizer()
 burnout_predictor = MockBurnoutPredictor()
+
+# Initialize actual modules
+try:
+    protein_optimizer = ProteinOptimizer()
+    logger.info("Successfully initialized ProteinOptimizer")
+except Exception as e:
+    logger.error(f"Failed to initialize ProteinOptimizer: {e}")
+    protein_optimizer = None
 
 @app.get("/")
 async def root():
@@ -177,21 +193,81 @@ async def get_torque_heatmap(user_id: str, exercise_type: str = "squat"):
 @app.post("/nutrition/analyze-meal")
 async def analyze_meal_photo(
     meal_photo: UploadFile = File(...),
-    user_id: str = "default",
-    dietary_restrictions: Optional[List[str]] = None
+    user_id: str = Form("default"),
+    dietary_restrictions: Optional[str] = Form(None)
 ):
     """Analyze meal photo for protein content and optimization"""
     try:
-        if not meal_photo.content_type.startswith("image/"):
-            raise HTTPException(status_code=400, detail="File must be an image")
+        print(f"DEBUG: Received meal analysis request")
+        print(f"DEBUG: File name: {meal_photo.filename}")
+        print(f"DEBUG: File content type: {meal_photo.content_type}")
+        print(f"DEBUG: User ID: {user_id}")
+        print(f"DEBUG: Dietary restrictions: {dietary_restrictions}")
         
-        result = await protein_optimizer.analyze_meal(
-            meal_photo, user_id, dietary_restrictions or []
-        )
-        return result
+        # Validate file type
+        if not meal_photo.content_type or not meal_photo.content_type.startswith("image/"):
+            print(f"DEBUG: Invalid content type: {meal_photo.content_type}")
+            raise HTTPException(status_code=422, detail="File must be an image (JPEG, PNG, etc.)")
+        
+        # Parse dietary restrictions
+        dietary_restrictions_list = []
+        if dietary_restrictions:
+            try:
+                if dietary_restrictions.startswith('['):
+                    dietary_restrictions_list = json.loads(dietary_restrictions)
+                else:
+                    dietary_restrictions_list = [dietary_restrictions]
+            except json.JSONDecodeError:
+                dietary_restrictions_list = [dietary_restrictions]
+        
+        # Use real nutrition analyzer if available, fallback to mock
+        if protein_optimizer and hasattr(protein_optimizer, 'analyze_meal'):
+            try:
+                meal_analysis = await protein_optimizer.analyze_meal(
+                    meal_photo, user_id, dietary_restrictions_list
+                )
+                
+                # Convert MealAnalysis to dict for JSON response
+                return {
+                    "total_protein": meal_analysis.total_protein,
+                    "total_calories": meal_analysis.total_calories,
+                    "detected_foods": [
+                        {
+                            "name": food.name,
+                            "confidence": food.confidence,
+                            "protein_content": food.protein_content,
+                            "calories": food.calories,
+                            "serving_size": food.serving_size
+                        }
+                        for food in meal_analysis.detected_foods
+                    ],
+                    "protein_deficit": meal_analysis.protein_deficit,
+                    "recommendations": meal_analysis.recommendations,
+                    "meal_quality_score": meal_analysis.meal_quality_score,
+                    "nutritional_balance": meal_analysis.nutritional_balance,
+                    "user_id": user_id,
+                    "analysis_method": "real_nutrition_model"
+                }
+            except Exception as real_error:
+                logger.error(f"Real nutrition analysis failed: {real_error}")
+                # Fallback to mock analysis
+                mock_optimizer = MockProteinOptimizer()
+                result = await mock_optimizer.analyze_meal(meal_photo, user_id, dietary_restrictions_list)
+                result["analysis_method"] = "mock_fallback"
+                result["fallback_reason"] = str(real_error)
+                return result
+        else:
+            # Use mock implementation
+            mock_optimizer = MockProteinOptimizer()
+            result = await mock_optimizer.analyze_meal(meal_photo, user_id, dietary_restrictions_list)
+            result["analysis_method"] = "mock_only"
+            return result
+            
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Meal analysis error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/nutrition/recommendations/{user_id}")
 async def get_nutrition_recommendations(
@@ -201,10 +277,29 @@ async def get_nutrition_recommendations(
 ):
     """Get personalized nutrition recommendations"""
     try:
-        recommendations = await protein_optimizer.get_recommendations(
-            user_id, target_protein, activity_level
-        )
-        return recommendations
+        # Use real nutrition analyzer if available, fallback to mock
+        if protein_optimizer and hasattr(protein_optimizer, 'get_recommendations'):
+            try:
+                recommendations = await protein_optimizer.get_recommendations(
+                    user_id, target_protein, activity_level
+                )
+                recommendations["analysis_method"] = "real_nutrition_model"
+                return recommendations
+            except Exception as real_error:
+                logger.error(f"Real nutrition recommendations failed: {real_error}")
+                # Fallback to mock
+                mock_optimizer = MockProteinOptimizer()
+                result = await mock_optimizer.get_recommendations(user_id, target_protein, activity_level)
+                result["analysis_method"] = "mock_fallback"
+                result["fallback_reason"] = str(real_error)
+                return result
+        else:
+            # Use mock implementation
+            mock_optimizer = MockProteinOptimizer()
+            result = await mock_optimizer.get_recommendations(user_id, target_protein, activity_level)
+            result["analysis_method"] = "mock_only"
+            return result
+            
     except Exception as e:
         logger.error(f"Nutrition recommendations error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -92,10 +92,11 @@ class FitBalanceAPI {
   private async uploadFile<T>(
     endpoint: string,
     file: File,
-    additionalFields: Record<string, string> = {}
+    additionalFields: Record<string, string> = {},
+    fileFieldName: string = 'file'
   ): Promise<T> {
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append(fileFieldName, file);
     
     Object.entries(additionalFields).forEach(([key, value]) => {
       formData.append(key, value);
@@ -107,7 +108,16 @@ class FitBalanceAPI {
     });
 
     if (!response.ok) {
-      throw new Error(`Upload Error: ${response.status} ${response.statusText}`);
+      let errorMessage = `Upload Error: ${response.status} ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        if (errorData.detail) {
+          errorMessage = errorData.detail;
+        }
+      } catch {
+        // If we can't parse JSON, use the default error message
+      }
+      throw new Error(errorMessage);
     }
 
     return response.json();
@@ -127,7 +137,7 @@ class FitBalanceAPI {
     return this.uploadFile('/biomechanics/analyze', videoFile, {
       exercise_type: exerciseType,
       user_id: userId,
-    });
+    }, 'video_file');
   }
 
   async getTorqueHeatmap(
@@ -146,7 +156,7 @@ class FitBalanceAPI {
     return this.uploadFile('/nutrition/analyze-meal', mealPhoto, {
       user_id: userId,
       dietary_restrictions: JSON.stringify(dietaryRestrictions),
-    });
+    }, 'meal_photo');
   }
 
   async getNutritionRecommendations(
