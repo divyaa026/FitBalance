@@ -11,3 +11,9 @@ venv/
 # IDEs
 .idea/
 *.sublime-*
+
+# Large dataset files
+biomechanics_dataset_large.json
+biomechanics_dataset_large.csv
+*.json[large]
+*.csv[large]
