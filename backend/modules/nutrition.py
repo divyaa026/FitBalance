@@ -1,6 +1,6 @@
 """
 Nutrition Module
-Dynamic protein optimization using meal photos with CNN-GRU architecture
+Dynamic protein optimization using meal photos with CNN-GRU architecture and Gemini Vision API
 """
 
 import torch
@@ -17,6 +17,17 @@ from dataclasses import dataclass
 from fastapi import UploadFile
 import json
 from datetime import datetime
+
+# Optional Gemini import - fallback gracefully if not available
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    genai = None
+    GEMINI_AVAILABLE = False
+
+import base64
+import io
 
 logger = logging.getLogger(__name__)
 
@@ -115,8 +126,33 @@ class ProteinOptimizer:
         self.user_profiles = {}  # In production, use database
         self.meal_history = {}  # In production, use database
         
+        # Initialize Gemini AI
+        self._setup_gemini()
+        
         # Load pre-trained model (placeholder)
         self._load_model()
+    
+    def _setup_gemini(self):
+        """Setup Google Gemini AI for enhanced food detection"""
+        try:
+            if not GEMINI_AVAILABLE:
+                self.use_gemini = False
+                logger.warning("google-generativeai package not installed, using fallback detection")
+                return
+                
+            # Configure Gemini API (you'll need to set this environment variable)
+            api_key = os.getenv('GEMINI_API_KEY')
+            if api_key:
+                genai.configure(api_key=api_key)
+                self.gemini_model = genai.GenerativeModel('gemini-2.5-flash')
+                self.use_gemini = True
+                logger.info("Gemini AI initialized successfully with gemini-2.5-flash")
+            else:
+                self.use_gemini = False
+                logger.warning("GEMINI_API_KEY not found, using fallback detection")
+        except Exception as e:
+            self.use_gemini = False
+            logger.warning(f"Could not initialize Gemini AI: {e}, using fallback detection")
     
     def _load_food_database(self) -> Dict:
         """Load food database with nutritional information"""
@@ -239,8 +275,20 @@ class ProteinOptimizer:
             raise
     
     def _detect_foods(self, image_path: str) -> List[FoodItem]:
-        """Detect foods in image using CNN-GRU model"""
+        """Detect foods in image using Gemini Vision API and CNN-GRU model"""
         try:
+            # Try Gemini AI first for better accuracy
+            if self.use_gemini:
+                logger.info("Using Gemini Vision API for food detection")
+                detected_foods = self._detect_foods_with_gemini(image_path)
+                if detected_foods:  # If Gemini returns results, use them
+                    return detected_foods
+                else:
+                    logger.info("Gemini didn't return results, falling back to CNN-GRU")
+            
+            # Fallback to CNN-GRU model
+            logger.info("Using CNN-GRU model for food detection")
+            
             # Load and preprocess image
             image = Image.open(image_path)
             image = image.resize((224, 224))  # Standard size for CNN
@@ -266,48 +314,173 @@ class ProteinOptimizer:
         
         return detected_foods
     
+    def _detect_foods_with_gemini(self, image_path: str) -> List[FoodItem]:
+        """Use Gemini Vision API to detect and analyze foods in the image"""
+        if not GEMINI_AVAILABLE:
+            logger.warning("Gemini not available - google-generativeai package not installed")
+            return []
+            
+        try:
+            # Load and prepare image for Gemini
+            image = Image.open(image_path)
+            
+            # Convert image to base64 for Gemini API
+            buffered = io.BytesIO()
+            image.save(buffered, format="JPEG")
+            image_data = buffered.getvalue()
+            
+            # Create the prompt for detailed food analysis
+            prompt = """
+            Analyze this meal image and provide detailed nutritional information. Please identify all visible foods and return the information in the following JSON format:
+
+            {
+                "detected_foods": [
+                    {
+                        "name": "food_name",
+                        "confidence": 0.95,
+                        "protein_content": 25.0,
+                        "calories": 165,
+                        "serving_size": "100g",
+                        "estimated_portion": "medium"
+                    }
+                ]
+            }
+
+            Guidelines:
+            - Be as accurate as possible with food identification
+            - Estimate realistic portion sizes (small, medium, large)
+            - Provide nutritional values per estimated portion
+            - Include confidence score (0.0 to 1.0)
+            - If uncertain about a food item, still include it but with lower confidence
+            - Focus on protein-rich foods but include all visible items
+            - Use standard food names (e.g., "chicken_breast", "broccoli", "quinoa")
+            """
+            
+            # Call Gemini Vision API
+            response = self.gemini_model.generate_content([prompt, image])
+            
+            if response and response.text:
+                # Parse the JSON response
+                response_text = response.text.strip()
+                
+                # Extract JSON from response (sometimes Gemini adds markdown formatting)
+                if "```json" in response_text:
+                    json_start = response_text.find("```json") + 7
+                    json_end = response_text.find("```", json_start)
+                    response_text = response_text[json_start:json_end]
+                elif "```" in response_text:
+                    json_start = response_text.find("```") + 3
+                    json_end = response_text.rfind("```")
+                    response_text = response_text[json_start:json_end]
+                
+                try:
+                    gemini_result = json.loads(response_text)
+                    detected_foods = []
+                    
+                    for food_data in gemini_result.get("detected_foods", []):
+                        # Create FoodItem objects from Gemini response
+                        food_item = FoodItem(
+                            name=food_data.get("name", "unknown_food"),
+                            confidence=float(food_data.get("confidence", 0.5)),
+                            protein_content=float(food_data.get("protein_content", 0.0)),
+                            calories=int(food_data.get("calories", 0)),
+                            serving_size=food_data.get("serving_size", "100g"),
+                            bounding_box=(0, 0, 100, 100)  # Gemini doesn't provide bounding boxes
+                        )
+                        detected_foods.append(food_item)
+                    
+                    if detected_foods:
+                        logger.info(f"Gemini detected {len(detected_foods)} foods: {[f.name for f in detected_foods]}")
+                        return detected_foods
+                    else:
+                        logger.warning("Gemini response contained no food items")
+                        
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse Gemini JSON response: {e}")
+                    logger.debug(f"Raw response: {response_text}")
+            else:
+                logger.warning("Gemini API returned empty response")
+                
+        except Exception as e:
+            logger.error(f"Gemini food detection error: {e}")
+        
+        return []  # Return empty list if Gemini fails
+    
     def _mock_food_detection(self, image_path: str) -> List[FoodItem]:
-        """Mock food detection for testing"""
+        """Enhanced mock food detection for testing (simulates Gemini-quality results)"""
         import random
         
-        # Pool of possible foods with realistic nutritional data
+        # More comprehensive food pool with realistic nutritional data
         food_pool = [
-            {"name": "chicken_breast", "protein": 31.0, "calories": 165, "confidence": 0.85},
-            {"name": "salmon", "protein": 25.4, "calories": 208, "confidence": 0.82},
-            {"name": "egg", "protein": 13.0, "calories": 155, "confidence": 0.90},
-            {"name": "broccoli", "protein": 2.8, "calories": 34, "confidence": 0.78},
-            {"name": "quinoa", "protein": 4.4, "calories": 120, "confidence": 0.72},
-            {"name": "brown_rice", "protein": 2.6, "calories": 112, "confidence": 0.75},
-            {"name": "avocado", "protein": 2.0, "calories": 160, "confidence": 0.80},
-            {"name": "almonds", "protein": 21.2, "calories": 579, "confidence": 0.70},
-            {"name": "Greek_yogurt", "protein": 10.0, "calories": 59, "confidence": 0.85},
-            {"name": "tofu", "protein": 8.1, "calories": 76, "confidence": 0.73},
+            # High-protein mains
+            {"name": "grilled_chicken_breast", "protein": 31.0, "calories": 165, "confidence": 0.92},
+            {"name": "salmon_fillet", "protein": 25.4, "calories": 208, "confidence": 0.89},
+            {"name": "lean_beef", "protein": 26.1, "calories": 250, "confidence": 0.85},
+            {"name": "turkey_breast", "protein": 29.0, "calories": 189, "confidence": 0.88},
+            {"name": "tuna_steak", "protein": 30.0, "calories": 184, "confidence": 0.91},
+            {"name": "tofu_grilled", "protein": 15.7, "calories": 144, "confidence": 0.78},
+            
+            # Protein sides
+            {"name": "hard_boiled_egg", "protein": 13.0, "calories": 155, "confidence": 0.95},
+            {"name": "greek_yogurt", "protein": 17.0, "calories": 100, "confidence": 0.87},
+            {"name": "cottage_cheese", "protein": 11.1, "calories": 98, "confidence": 0.83},
+            {"name": "lentils_cooked", "protein": 9.0, "calories": 116, "confidence": 0.80},
+            
+            # Vegetables
+            {"name": "steamed_broccoli", "protein": 2.8, "calories": 34, "confidence": 0.93},
+            {"name": "roasted_asparagus", "protein": 2.2, "calories": 27, "confidence": 0.85},
+            {"name": "spinach_sauteed", "protein": 2.9, "calories": 23, "confidence": 0.82},
+            {"name": "bell_peppers", "protein": 1.0, "calories": 31, "confidence": 0.88},
+            {"name": "green_beans", "protein": 1.8, "calories": 35, "confidence": 0.84},
+            
+            # Healthy carbs
+            {"name": "quinoa_cooked", "protein": 4.4, "calories": 120, "confidence": 0.76},
+            {"name": "brown_rice", "protein": 2.6, "calories": 112, "confidence": 0.81},
+            {"name": "sweet_potato", "protein": 2.0, "calories": 103, "confidence": 0.86},
+            {"name": "oats", "protein": 2.4, "calories": 68, "confidence": 0.79},
+            
+            # Healthy fats
+            {"name": "avocado_sliced", "protein": 2.0, "calories": 160, "confidence": 0.91},
+            {"name": "almonds", "protein": 21.2, "calories": 579, "confidence": 0.73},
+            {"name": "olive_oil_drizzle", "protein": 0.0, "calories": 40, "confidence": 0.77},
         ]
         
-        # Randomly select 2-4 foods to simulate realistic meal detection
-        num_foods = random.randint(2, 4)
+        # Randomly select 2-5 foods to simulate realistic meal detection
+        num_foods = random.randint(2, 5)
         selected_foods = random.sample(food_pool, min(num_foods, len(food_pool)))
+        
+        # Ensure at least one high-protein food if possible
+        has_protein = any(food["protein"] > 15 for food in selected_foods)
+        if not has_protein and len(food_pool) > num_foods:
+            high_protein_foods = [f for f in food_pool if f["protein"] > 15]
+            if high_protein_foods:
+                selected_foods[0] = random.choice(high_protein_foods)
         
         mock_foods = []
         for i, food in enumerate(selected_foods):
-            # Add some randomness to portions
-            portion_multiplier = random.uniform(0.7, 1.5)
+            # Add realistic portion variation
+            portion_multiplier = random.uniform(0.6, 1.8)  # More realistic range
+            
+            # Adjust confidence based on food type (some are easier to detect)
+            confidence_adjustment = random.uniform(-0.1, 0.05)
+            final_confidence = max(0.5, min(0.98, food["confidence"] + confidence_adjustment))
             
             mock_foods.append(FoodItem(
                 name=food["name"],
-                confidence=food["confidence"],
+                confidence=round(final_confidence, 2),
                 protein_content=round(food["protein"] * portion_multiplier, 1),
                 calories=round(food["calories"] * portion_multiplier),
                 serving_size=f"{round(100 * portion_multiplier)}g",
                 bounding_box=(
-                    random.randint(50, 200), 
-                    random.randint(50, 150), 
-                    random.randint(80, 120), 
-                    random.randint(60, 100)
+                    random.randint(20, 150), 
+                    random.randint(20, 120), 
+                    random.randint(80, 140), 
+                    random.randint(60, 120)
                 )
             ))
         
-        logger.info(f"Mock detected {len(mock_foods)} foods: {[f.name for f in mock_foods]}")
+        logger.info(f"Enhanced mock detected {len(mock_foods)} foods: {[f.name for f in mock_foods]}")
+        logger.info(f"Total protein: {sum(f.protein_content for f in mock_foods):.1f}g, Total calories: {sum(f.calories for f in mock_foods)}")
         return mock_foods
     
     def _preprocess_image(self, image: Image.Image) -> torch.Tensor:

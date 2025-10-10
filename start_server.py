@@ -7,9 +7,18 @@ import os
 import sys
 import uvicorn
 from pathlib import Path
+from dotenv import load_dotenv
 
 def setup_environment():
     """Setup environment for running the server"""
+    # Load environment variables from .env file
+    env_file = Path(__file__).parent / ".env"
+    if env_file.exists():
+        load_dotenv(env_file)
+        print(f"✅ Loaded environment variables from {env_file}")
+    else:
+        print(f"⚠️  No .env file found. Copy .env.example to .env and configure your API keys")
+    
     # Add backend to Python path
     backend_path = Path(__file__).parent / "backend"
     sys.path.insert(0, str(backend_path))

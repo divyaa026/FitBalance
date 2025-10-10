@@ -64,16 +64,42 @@ class MockBiomechanicsCoach:
 class MockProteinOptimizer:
     async def analyze_meal(self, meal_photo, user_id, dietary_restrictions):
         # Simulate processing time
-        time.sleep(1)
-        return {
-            "total_protein": 32.3,
-            "total_calories": 436,
-            "detected_foods": [
-                {"name": "grilled_chicken", "protein_content": 25.0, "confidence": 0.92},
-                {"name": "brown_rice", "protein_content": 4.5, "confidence": 0.88}
+        time.sleep(0.5)
+        
+        import random
+        
+        # Mock food combinations for more realistic results
+        food_combinations = [
+            [
+                {"name": "grilled_chicken", "protein_content": 25.0, "calories": 165, "confidence": 0.92},
+                {"name": "brown_rice", "protein_content": 4.5, "calories": 130, "confidence": 0.88},
+                {"name": "broccoli", "protein_content": 2.8, "calories": 34, "confidence": 0.85}
             ],
-            "meal_quality_score": 85.0,
-            "recommendations": ["Great protein content!", "Consider adding healthy fats"],
+            [
+                {"name": "salmon", "protein_content": 22.0, "calories": 206, "confidence": 0.94},
+                {"name": "quinoa", "protein_content": 4.4, "calories": 120, "confidence": 0.89},
+                {"name": "spinach", "protein_content": 2.9, "calories": 23, "confidence": 0.82}
+            ],
+            [
+                {"name": "greek_yogurt", "protein_content": 10.0, "calories": 59, "confidence": 0.91},
+                {"name": "almonds", "protein_content": 21.0, "calories": 579, "confidence": 0.87},
+                {"name": "berries", "protein_content": 1.0, "calories": 50, "confidence": 0.90}
+            ]
+        ]
+        
+        selected_foods = random.choice(food_combinations)
+        total_protein = sum(food["protein_content"] for food in selected_foods)
+        total_calories = sum(food["calories"] for food in selected_foods)
+        
+        return {
+            "total_protein": round(total_protein, 1),
+            "total_calories": round(total_calories, 0),
+            "detected_foods": selected_foods,
+            "meal_quality_score": random.randint(75, 95),
+            "recommendations": [
+                "Great protein variety!" if len(selected_foods) > 2 else "Consider adding protein sources",
+                "Well balanced meal!" if total_protein > 20 else "Try adding more protein"
+            ],
             "user_id": user_id
         }
     
