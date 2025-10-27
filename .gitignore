@@ -3,11 +3,14 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+*.so
+.Python
 
 # Virtual Environment
 venv/
 fitbalance_env/
 .env
+.env.local
 
 # Node.js
 node_modules/
@@ -22,13 +25,35 @@ yarn-error.log*
 *.sublime-*
 .vscode/
 
+# Large ML model files (consider Git LFS for production)
+*.h5
+*.pth
+*.pkl
+*.joblib
+
 # Large dataset files
 biomechanics_dataset_large.json
 biomechanics_dataset_large.csv
 *.json[large]
 *.csv[large]
+datasets/biomechanics/landmark_sequences/*.npy
+datasets/burnout/*.csv
+nutrition/augmented_indian_food_dataset/
+nutrition/Indian Food Images/
 
 # Temporary files
 *.tmp
 *.temp
 resolve_conflicts.md
+
+# Logs
+*.log
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS
+.DS_Store
+Thumbs.db

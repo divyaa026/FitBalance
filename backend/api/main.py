@@ -274,6 +274,13 @@ async def analyze_meal_photo(
                     "user_id": user_id,
                     "analysis_method": "real_nutrition_model"
                 }
+            except ValueError as validation_error:
+                # Image validation failed (not a food image)
+                logger.warning(f"Image validation failed: {validation_error}")
+                raise HTTPException(
+                    status_code=400, 
+                    detail=str(validation_error)
+                )
             except Exception as real_error:
                 logger.error(f"Real nutrition analysis failed: {real_error}")
                 # Fallback to mock analysis

@@ -233,6 +233,17 @@ class ProteinOptimizer:
                 tmp_file.write(content)
                 image_path = tmp_file.name
             
+            # First, validate if the image contains food
+            is_food, validation_reason = self._is_food_image(image_path)
+            
+            if not is_food:
+                # Clean up and raise error
+                os.unlink(image_path)
+                logger.warning(f"Non-food image rejected: {validation_reason}")
+                raise ValueError(f"This image does not appear to contain food. {validation_reason}")
+            
+            logger.info(f"Image validated as food: {validation_reason}")
+            
             # Process image
             detected_foods = self._detect_foods(image_path)
             
@@ -314,6 +325,60 @@ class ProteinOptimizer:
         
         return detected_foods
     
+    def _is_food_image(self, image_path: str) -> Tuple[bool, str]:
+        """Check if the image contains food using Gemini Vision API"""
+        if not GEMINI_AVAILABLE or not self.use_gemini:
+            # Fallback: assume it's food if we can't verify
+            return True, "Cannot verify - Gemini not available"
+            
+        try:
+            image = Image.open(image_path)
+            
+            # Simple validation prompt
+            validation_prompt = """
+            Analyze this image and answer: Does this image contain FOOD or a MEAL?
+            
+            Respond with a JSON object in this exact format:
+            {
+                "is_food": true or false,
+                "reason": "brief explanation",
+                "detected_subjects": "what you see in the image"
+            }
+            
+            Return is_food: true ONLY if the image shows actual food, meals, dishes, or edible items.
+            Return is_food: false if the image shows people, faces, portraits, animals, objects, scenery, or anything that is NOT food.
+            """
+            
+            response = self.gemini_model.generate_content([validation_prompt, image])
+            
+            if response and response.text:
+                response_text = response.text.strip()
+                
+                # Extract JSON from response
+                if "```json" in response_text:
+                    json_start = response_text.find("```json") + 7
+                    json_end = response_text.find("```", json_start)
+                    response_text = response_text[json_start:json_end]
+                elif "```" in response_text:
+                    json_start = response_text.find("```") + 3
+                    json_end = response_text.rfind("```")
+                    response_text = response_text[json_start:json_end]
+                
+                result = json.loads(response_text.strip())
+                is_food = result.get("is_food", False)
+                reason = result.get("reason", "Unknown")
+                detected = result.get("detected_subjects", "Unknown")
+                
+                logger.info(f"Food validation: is_food={is_food}, reason={reason}, detected={detected}")
+                return is_food, f"{reason} - Detected: {detected}"
+                
+        except Exception as e:
+            logger.error(f"Food validation error: {e}")
+            # On error, be conservative and reject to avoid false positives
+            return False, f"Validation failed: {str(e)}"
+        
+        return False, "Unable to validate image"
+    
     def _detect_foods_with_gemini(self, image_path: str) -> List[FoodItem]:
         """Use Gemini Vision API to detect and analyze foods in the image"""
         if not GEMINI_AVAILABLE:
@@ -354,6 +419,7 @@ class ProteinOptimizer:
             - If uncertain about a food item, still include it but with lower confidence
             - Focus on protein-rich foods but include all visible items
             - Use standard food names (e.g., "chicken_breast", "broccoli", "quinoa")
+            - If this image does NOT contain food, return an empty array for detected_foods
             """
             
             # Call Gemini Vision API

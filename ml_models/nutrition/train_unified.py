@@ -38,6 +38,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 import torchvision.transforms as T
+import torchvision.models as models
 
 try:
     from efficientnet_pytorch import EfficientNet
@@ -148,12 +149,35 @@ def create_transforms(train: bool = True):
 
 
 def make_model(num_classes: int, device: str):
-    if EfficientNet is None:
-        raise RuntimeError('efficientnet_pytorch is required. Install it via pip install efficientnet_pytorch')
+    # Prefer efficientnet_pytorch if available, otherwise fall back to torchvision models
+    backbone = None
+    in_features = None
 
-    model = EfficientNet.from_pretrained('efficientnet-b3')
-    in_features = model._fc.in_features
-    model._fc = nn.Identity()
+    if EfficientNet is not None:
+        try:
+            backbone = EfficientNet.from_pretrained('efficientnet-b3')
+            in_features = backbone._fc.in_features
+            backbone._fc = nn.Identity()
+        except Exception:
+            backbone = None
+
+    if backbone is None:
+        # Try ResNet50 from torchvision as a robust fallback
+        try:
+            backbone = models.resnet50(pretrained=True)
+            in_features = backbone.fc.in_features
+            backbone.fc = nn.Identity()
+        except Exception:
+            # Final fallback: MobileNetV3 small
+            backbone = models.mobilenet_v3_small(pretrained=True)
+            # MobileNetV3 classifier is usually a Sequential ending with Linear
+            if hasattr(backbone, 'classifier') and isinstance(backbone.classifier, nn.Sequential):
+                last = backbone.classifier[-1]
+                in_features = last.in_features if hasattr(last, 'in_features') else 576
+                backbone.classifier = nn.Identity()
+            else:
+                # As a safe default
+                in_features = 576
 
     # classification head
     classifier = nn.Sequential(
@@ -175,7 +199,7 @@ def make_model(num_classes: int, device: str):
             features = self.backbone(x)
             return self.head(features)
 
-    full = FullModel(model, classifier)
+    full = FullModel(backbone, classifier)
     return full.to(device)
 
 
