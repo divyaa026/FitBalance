@@ -97,33 +97,85 @@ export function useNutrition() {
   };
 }
 
+// Additional nutrition hooks
+import API_BASE_URL from '@/config/api';
+import { API_ENDPOINTS } from '@/config/api';
+import { useQuery } from '@tanstack/react-query';
+
+export function useNutritionHistory(userId: number, days: number = 7) {
+  return useQuery({
+    queryKey: ['nutrition-history', userId, days],
+    queryFn: async () => {
+      const response = await fetch(API_ENDPOINTS.NUTRITION_HISTORY(userId, days));
+      if (!response.ok) throw new Error('Failed to fetch nutrition history');
+      return response.json();
+    },
+  });
+}
+
+export function useNutritionStats(userId: number, days: number = 7) {
+  return useQuery({
+    queryKey: ['nutrition-stats', userId, days],
+    queryFn: async () => {
+      const response = await fetch(API_ENDPOINTS.NUTRITION_STATS(userId, days));
+      if (!response.ok) throw new Error('Failed to fetch nutrition stats');
+      return response.json();
+    },
+  });
+}
+
+export function useFoodDatabase() {
+  return useQuery({
+    queryKey: ['food-database'],
+    queryFn: async () => {
+      const response = await fetch(API_ENDPOINTS.NUTRITION_FOODS);
+      if (!response.ok) throw new Error('Failed to fetch food database');
+      return response.json();
+    },
+  });
+}
+
 // Custom hook for burnout analysis
 export function useBurnout() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<BurnoutAnalysis | null>(null);
+  const [burnoutData, setBurnoutData] = useState<any>(null);
   const [survivalCurve, setSurvivalCurve] = useState<SurvivalCurve | null>(null);
 
-  const analyzeRisk = useCallback(async (
-    userId: string,
-    workoutFrequency: number,
-    sleepHours: number,
-    stressLevel: number,
-    recoveryTime: number,
-    performanceTrend: string = 'stable'
+  const analyzeBurnout = useCallback(async (
+    data: {
+      user_id: string;
+      workout_frequency: number;
+      sleep_hours: number;
+      stress_level: number;
+      recovery_time: number;
+      performance_trend?: string;
+    }
   ) => {
     try {
       setIsLoading(true);
       setError(null);
-      const result = await api.analyzeBurnoutRisk(
-        userId,
-        workoutFrequency,
-        sleepHours,
-        stressLevel,
-        recoveryTime,
-        performanceTrend
-      );
+      const payload = {
+        user_id: data.user_id,
+        workout_frequency: data.workout_frequency,
+        sleep_hours: data.sleep_hours,
+        stress_level: data.stress_level,
+        recovery_time: data.recovery_time,
+        performance_trend: data.performance_trend || 'stable',
+      };
+
+      const response = await fetch(API_ENDPOINTS.BURNOUT_ANALYZE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) throw new Error('Burnout analysis failed');
+
+      const result = await response.json();
       setAnalysis(result);
+      setBurnoutData(result);
       return result;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Risk analysis failed';
@@ -162,8 +214,9 @@ export function useBurnout() {
     isLoading,
     error,
     analysis,
+    burnoutData,
     survivalCurve,
-    analyzeRisk,
+    analyzeBurnout,
     getSurvivalCurve,
     getRecommendations,
   };

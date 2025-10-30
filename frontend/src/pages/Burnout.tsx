@@ -2,6 +2,8 @@ import { Activity, AlertTriangle, TrendingDown, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { BurnoutAssessment } from "@/components/BurnoutAssessment";
+import { PerformancePrediction } from "@/components/PerformancePrediction";
 
 export default function Burnout() {
   return (
@@ -37,7 +39,7 @@ export default function Burnout() {
                 You're maintaining a healthy training balance
               </p>
             </div>
-            
+
             <div className="space-y-4">
               <div>
                 <div className="flex items-center justify-between text-sm mb-2">
@@ -46,7 +48,7 @@ export default function Burnout() {
                 </div>
                 <Progress value={25} className="h-2" />
               </div>
-              
+
               <div>
                 <div className="flex items-center justify-between text-sm mb-2">
                   <span className="text-muted-foreground">Recovery Status</span>
@@ -79,55 +81,60 @@ export default function Burnout() {
           ))}
         </div>
 
-        {/* Survival Curve */}
-        <Card className="glass-card mb-6 animate-slide-up">
-          <CardHeader>
-            <CardTitle>Performance Prediction</CardTitle>
-            <CardDescription>
-              Estimated time to optimal performance maintenance
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="h-64 bg-muted rounded-lg flex items-center justify-center">
-              <div className="text-center text-muted-foreground">
-                <TrendingDown className="h-12 w-12 mx-auto mb-4" />
-                <p>Survival curve visualization</p>
-                <p className="text-sm">Track your performance trends over time</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Assessment and Prediction */}
+        <div className="grid md:grid-cols-2 gap-6 mb-6 animate-slide-up">
+          <BurnoutAssessment
+            data={{
+              weeklyLoad: 12,
+              recoverySleep: 7.5,
+              stressScore: 45,
+              prediction: 'Low',
+              confidence: 85
+            }}
+          />
+          <PerformancePrediction
+            predictions={[
+              { date: 'Mon', predicted: 85, actual: 82 },
+              { date: 'Tue', predicted: 88, actual: 86 },
+              { date: 'Wed', predicted: 92, actual: 90 },
+              { date: 'Thu', predicted: 95, actual: 94 },
+              { date: 'Fri', predicted: 96 },
+              { date: 'Sat', predicted: 98 },
+              { date: 'Sun', predicted: 97 },
+            ]}
+          />
 
-        {/* Recommendations */}
-        <Card className="glass-card animate-slide-up">
-          <CardHeader>
-            <CardTitle>Recovery Recommendations</CardTitle>
-            <CardDescription>
-              Personalized strategies to maintain peak performance
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {[
-                "Maintain current training intensity for optimal adaptation",
-                "Focus on quality sleep to support recovery (7-9 hours)",
-                "Incorporate active recovery sessions 2-3 times per week",
-                "Monitor nutrition to support training demands",
-              ].map((rec, index) => (
-                <div key={index} className="flex items-start gap-3 p-4 rounded-lg bg-muted/50">
-                  <div className="h-6 w-6 rounded-full bg-green-500/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <span className="text-green-500 text-sm font-bold">{index + 1}</span>
+          {/* Recommendations */}
+          <Card className="glass-card animate-slide-up">
+            <CardHeader>
+              <CardTitle>Recovery Recommendations</CardTitle>
+              <CardDescription>
+                Personalized strategies to maintain peak performance
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {[
+                  "Maintain current training intensity for optimal adaptation",
+                  "Focus on quality sleep to support recovery (7-9 hours)",
+                  "Incorporate active recovery sessions 2-3 times per week",
+                  "Monitor nutrition to support training demands",
+                ].map((rec, index) => (
+                  <div key={index} className="flex items-start gap-3 p-4 rounded-lg bg-muted/50">
+                    <div className="h-6 w-6 rounded-full bg-green-500/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <span className="text-green-500 text-sm font-bold">{index + 1}</span>
+                    </div>
+                    <p className="text-sm">{rec}</p>
                   </div>
-                  <p className="text-sm">{rec}</p>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
 
-            <Button className="w-full mt-6 gradient-burnout text-white font-medium">
-              Update Assessment
-            </Button>
-          </CardContent>
-        </Card>
+              <Button className="w-full mt-6 gradient-burnout text-white font-medium">
+                Update Assessment
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   );
