@@ -3,19 +3,18 @@ Burnout Prediction Module
 Burnout prediction with survival curves using Cox Proportional Hazards model
 """
 
+import pickle
+import sys
+import os
 import numpy as np
 import pandas as pd
-from lifelines import CoxPHFitter, KaplanMeierFitter
-from lifelines.utils import concordance_index
-import matplotlib.pyplot as plt
-import seaborn as sns
 from typing import Dict, List, Optional, Tuple
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import json
-import io
-import base64
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'ml_models', 'burnout'))
+from inference import predict_burnout_risk as predict_with_cox
 
 logger = logging.getLogger(__name__)
 
@@ -61,18 +60,16 @@ class BurnoutPredictor:
         self._load_models()
     
     def _load_models(self):
-        """Load pre-trained Cox PH and Kaplan-Meier models"""
+        """Load pre-trained Cox PH model"""
         try:
-            # In production, load from saved models
-            # self.cph_model = CoxPHFitter()
-            # self.cph_model.load_model('models/burnout_cph_model.pkl')
+            model_path = os.path.join(os.path.dirname(__file__), '..', '..', 'ml_models', 'burnout', 'cox_model.pkl')
+            with open(model_path, 'rb') as f:
+                self.cph_model = pickle.load(f)
             
-            # For demo, create mock model
-            self._create_mock_models()
-            logger.info("Burnout prediction models loaded successfully")
+            logger.info("[SUCCESS] Burnout Cox model loaded successfully")
         except Exception as e:
-            logger.warning(f"Could not load pre-trained models: {e}")
-            self._create_mock_models()
+            logger.error(f"[ERROR] Could not load Cox model: {e}")
+            self._create_mock_models()  # Fallback
     
     def _create_mock_models(self):
         """Create mock models for demonstration"""
@@ -206,45 +203,85 @@ class BurnoutPredictor:
         return self.user_data[user_id]
     
     def _calculate_risk_score(self, risk_factors: BurnoutRiskFactors) -> float:
-        """Calculate burnout risk score (0-100)"""
-        score = 0.0
-        
-        # Workout frequency (0-25 points)
-        if risk_factors.workout_frequency >= 6:
-            score += 25
-        elif risk_factors.workout_frequency >= 4:
-            score += 15
-        elif risk_factors.workout_frequency >= 2:
-            score += 5
-        
-        # Sleep hours (0-20 points)
-        if risk_factors.sleep_hours < 6:
-            score += 20
-        elif risk_factors.sleep_hours < 7:
-            score += 15
-        elif risk_factors.sleep_hours < 8:
-            score += 10
-        
-        # Stress level (0-25 points)
-        score += risk_factors.stress_level * 2.5
-        
-        # Recovery time (0-15 points)
-        if risk_factors.recovery_time <= 1:
-            score += 15
-        elif risk_factors.recovery_time <= 2:
-            score += 10
-        elif risk_factors.recovery_time <= 3:
-            score += 5
-        
-        # Performance trend (0-15 points)
-        if risk_factors.performance_trend == 'declining':
-            score += 15
-        elif risk_factors.performance_trend == 'stable':
-            score += 8
-        elif risk_factors.performance_trend == 'improving':
-            score += 2
-        
-        return min(100.0, score)
+        """Calculate burnout risk score using real Cox model"""
+        try:
+            # Map training_intensity string to model format
+            intensity_map = {
+                'low': 'low',
+                'moderate': 'moderate',
+                'high': 'high',
+                'extreme': 'extreme'
+            }
+            
+            result = predict_with_cox(
+                age=risk_factors.age,
+                experience_years=risk_factors.experience_years,
+                workout_frequency=risk_factors.workout_frequency,
+                avg_sleep_hours=risk_factors.sleep_hours,
+                stress_level=risk_factors.stress_level,
+                recovery_days=risk_factors.recovery_time,
+                hrv_avg=70.0,  # Default, should come from user data
+                resting_hr=65,  # Default, should come from user data
+                injury_history=0,  # Default, should come from user data
+                nutrition_quality=7.0,  # Default, should come from user data
+                gender=risk_factors.gender if risk_factors.gender in ['M', 'F'] else 'M',
+                training_intensity=intensity_map.get(risk_factors.training_intensity, 'moderate')
+            )
+            
+            # Convert risk score to 0-100 scale
+            # Risk score from Cox model is relative hazard (1.0 = average)
+            # Convert to percentage: <0.5 = low, 0.5-1.5 = medium, 1.5-3.0 = high, >3.0 = critical
+            risk_score = result['risk_score']
+            if risk_score < 0.5:
+                return 20.0  # Low risk
+            elif risk_score < 1.5:
+                return 20.0 + (risk_score - 0.5) * 60.0  # Medium risk (20-80)
+            elif risk_score < 3.0:
+                return 80.0 + (risk_score - 1.5) * 13.33  # High risk (80-100)
+            else:
+                return 100.0  # Critical risk
+            
+        except Exception as e:
+            logger.error(f"Risk score calculation error: {e}")
+            # Fallback to simple calculation
+            score = 0.0
+            
+            # Workout frequency (0-25 points)
+            if risk_factors.workout_frequency >= 6:
+                score += 25
+            elif risk_factors.workout_frequency >= 4:
+                score += 15
+            elif risk_factors.workout_frequency >= 2:
+                score += 5
+            
+            # Sleep hours (0-20 points)
+            if risk_factors.sleep_hours < 6:
+                score += 20
+            elif risk_factors.sleep_hours < 7:
+                score += 15
+            elif risk_factors.sleep_hours < 8:
+                score += 10
+            
+            # Stress level (0-25 points)
+            score += risk_factors.stress_level * 2.5
+            
+            # Recovery time (0-15 points)
+            if risk_factors.recovery_time <= 1:
+                score += 15
+            elif risk_factors.recovery_time <= 2:
+                score += 10
+            elif risk_factors.recovery_time <= 3:
+                score += 5
+            
+            # Performance trend (0-15 points)
+            if risk_factors.performance_trend == 'declining':
+                score += 15
+            elif risk_factors.performance_trend == 'stable':
+                score += 8
+            elif risk_factors.performance_trend == 'improving':
+                score += 2
+            
+            return min(100.0, score)
     
     def _determine_risk_level(self, risk_score: float) -> str:
         """Determine risk level based on score"""
@@ -258,50 +295,64 @@ class BurnoutPredictor:
             return 'critical'
     
     def _predict_time_to_burnout(self, risk_factors: BurnoutRiskFactors) -> Optional[float]:
-        """Predict time to burnout using Cox PH model"""
+        """Predict time to burnout using real Cox model"""
         try:
-            if self.cph_model is None:
-                return None
+            # Map training_intensity string to model format
+            intensity_map = {
+                'low': 'low',
+                'moderate': 'moderate',
+                'high': 'high',
+                'extreme': 'extreme'
+            }
             
-            # Create feature vector for prediction
-            features = pd.DataFrame([{
-                'workout_frequency': risk_factors.workout_frequency,
-                'sleep_hours': risk_factors.sleep_hours,
-                'stress_level': risk_factors.stress_level,
-                'recovery_time': risk_factors.recovery_time,
-                'age': risk_factors.age,
-                'experience_years': risk_factors.experience_years
-            }])
+            result = predict_with_cox(
+                age=risk_factors.age,
+                experience_years=risk_factors.experience_years,
+                workout_frequency=risk_factors.workout_frequency,
+                avg_sleep_hours=risk_factors.sleep_hours,
+                stress_level=risk_factors.stress_level,
+                recovery_days=risk_factors.recovery_time,
+                hrv_avg=70.0,  # Default, should come from user data
+                resting_hr=65,  # Default, should come from user data
+                injury_history=0,  # Default, should come from user data
+                nutrition_quality=7.0,  # Default, should come from user data
+                gender=risk_factors.gender if risk_factors.gender in ['M', 'F'] else 'M',
+                training_intensity=intensity_map.get(risk_factors.training_intensity, 'moderate')
+            )
             
-            # Predict survival time
-            predicted_time = self.cph_model.predict_expectation(features)
-            
-            return float(predicted_time.iloc[0]) if not pd.isna(predicted_time.iloc[0]) else None
+            return result['time_to_burnout_days']
             
         except Exception as e:
             logger.error(f"Time to burnout prediction error: {e}")
             return None
     
     def _calculate_survival_probability(self, risk_factors: BurnoutRiskFactors) -> float:
-        """Calculate survival probability at 1 year"""
+        """Calculate survival probability at 1 year using real Cox model"""
         try:
-            if self.cph_model is None:
-                return 0.7  # Default probability
+            # Map training_intensity string to model format
+            intensity_map = {
+                'low': 'low',
+                'moderate': 'moderate',
+                'high': 'high',
+                'extreme': 'extreme'
+            }
             
-            # Create feature vector
-            features = pd.DataFrame([{
-                'workout_frequency': risk_factors.workout_frequency,
-                'sleep_hours': risk_factors.sleep_hours,
-                'stress_level': risk_factors.stress_level,
-                'recovery_time': risk_factors.recovery_time,
-                'age': risk_factors.age,
-                'experience_years': risk_factors.experience_years
-            }])
+            result = predict_with_cox(
+                age=risk_factors.age,
+                experience_years=risk_factors.experience_years,
+                workout_frequency=risk_factors.workout_frequency,
+                avg_sleep_hours=risk_factors.sleep_hours,
+                stress_level=risk_factors.stress_level,
+                recovery_days=risk_factors.recovery_time,
+                hrv_avg=70.0,  # Default, should come from user data
+                resting_hr=65,  # Default, should come from user data
+                injury_history=0,  # Default, should come from user data
+                nutrition_quality=7.0,  # Default, should come from user data
+                gender=risk_factors.gender if risk_factors.gender in ['M', 'F'] else 'M',
+                training_intensity=intensity_map.get(risk_factors.training_intensity, 'moderate')
+            )
             
-            # Predict survival probability at 365 days
-            survival_prob = self.cph_model.predict_survival_function(features, times=[365])
-            
-            return float(survival_prob.iloc[0, 0]) if not pd.isna(survival_prob.iloc[0, 0]) else 0.7
+            return result['survival_probability_1yr']
             
         except Exception as e:
             logger.error(f"Survival probability calculation error: {e}")
@@ -372,14 +423,29 @@ class BurnoutPredictor:
             if self.cph_model is None:
                 return self._generate_mock_survival_data()
             
-            # Create feature vector
+            # Create feature vector with the SAME columns used to train the Cox model
+            intensity_map = {
+                'low': 'low',
+                'moderate': 'moderate',
+                'high': 'high',
+                'extreme': 'extreme'
+            }
             features = pd.DataFrame([{
-                'workout_frequency': risk_factors.workout_frequency,
-                'sleep_hours': risk_factors.sleep_hours,
-                'stress_level': risk_factors.stress_level,
-                'recovery_time': risk_factors.recovery_time,
                 'age': risk_factors.age,
-                'experience_years': risk_factors.experience_years
+                'experience_years': risk_factors.experience_years,
+                'workout_frequency': risk_factors.workout_frequency,
+                'avg_sleep_hours': risk_factors.sleep_hours,
+                'stress_level': risk_factors.stress_level,
+                'recovery_days': risk_factors.recovery_time,
+                'hrv_avg': 70.0,
+                'resting_hr': 65,
+                'injury_history': 0,
+                'nutrition_quality': 7.0,
+                'gender_M': 1 if risk_factors.gender == 'M' else 0,
+                'gender_F': 1 if risk_factors.gender == 'F' else 0,
+                'intensity_moderate': 1 if intensity_map.get(risk_factors.training_intensity, 'moderate') == 'moderate' else 0,
+                'intensity_high': 1 if intensity_map.get(risk_factors.training_intensity, 'moderate') == 'high' else 0,
+                'intensity_extreme': 1 if intensity_map.get(risk_factors.training_intensity, 'moderate') == 'extreme' else 0,
             }])
             
             # Generate survival curve

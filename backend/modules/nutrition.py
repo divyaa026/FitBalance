@@ -3,9 +3,17 @@ Nutrition Module
 Dynamic protein optimization using meal photos with CNN-GRU architecture and Gemini Vision API
 """
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+# Optional PyTorch imports - fallback gracefully if not available
+try:
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+    TORCH_AVAILABLE = True
+except ImportError:
+    torch = None
+    nn = None
+    F = None
+    TORCH_AVAILABLE = False
 import numpy as np
 import cv2
 from PIL import Image
@@ -28,6 +36,9 @@ except ImportError:
 
 import base64
 import io
+
+# Import database module
+from backend.database.nutrition_db import nutrition_db
 
 logger = logging.getLogger(__name__)
 
@@ -568,13 +579,34 @@ class ProteinOptimizer:
         return image_tensor
     
     def _calculate_nutrition(self, detected_foods: List[FoodItem]) -> Tuple[float, float, Dict[str, float]]:
-        """Calculate total nutritional content"""
-        total_protein = sum(food.protein_content for food in detected_foods)
-        total_calories = sum(food.calories for food in detected_foods)
+        """Calculate total nutritional content using database"""
+        total_protein = 0
+        total_calories = 0
+        total_carbs = 0
+        total_fat = 0
         
-        # Calculate macronutrient balance
-        total_carbs = sum(self.food_database.get(food.name, {}).get('carbs', 0) for food in detected_foods)
-        total_fat = sum(self.food_database.get(food.name, {}).get('fat', 0) for food in detected_foods)
+        for food in detected_foods:
+            # Get nutrition from database
+            nutrition = nutrition_db.get_food_nutrition(food.name)
+            if nutrition:
+                # Update food item with database values
+                food.protein_content = nutrition['protein']
+                food.calories = nutrition['calories']
+                
+                # Accumulate totals (assuming 100g portions)
+                total_protein += nutrition['protein']
+                total_calories += nutrition['calories']
+                total_carbs += nutrition['carbs']
+                total_fat += nutrition['fat']
+            else:
+                # Fallback to existing food database
+                food_data = self.food_database.get(food.name, {})
+                food.protein_content = food_data.get('protein', 0)
+                food.calories = food_data.get('calories', 0)
+                total_protein += food.protein_content
+                total_calories += food.calories
+                total_carbs += food_data.get('carbs', 0)
+                total_fat += food_data.get('fat', 0)
         
         nutritional_balance = {
             'protein': total_protein,
@@ -734,18 +766,40 @@ class ProteinOptimizer:
         return min(100.0, score)
     
     def _store_meal_data(self, user_id: str, detected_foods: List[FoodItem], total_protein: float, total_calories: float):
-        """Store meal data for user"""
-        if user_id not in self.meal_history:
-            self.meal_history[user_id] = []
-        
-        meal_data = {
-            'timestamp': datetime.now().isoformat(),
-            'foods': [food.name for food in detected_foods],
-            'total_protein': total_protein,
-            'total_calories': total_calories
-        }
-        
-        self.meal_history[user_id].append(meal_data)
+        """Store meal data for user using database"""
+        try:
+            # Prepare detected foods dictionary
+            detected_foods_dict = {food.name: 100 for food in detected_foods}  # Assuming 100g each
+            
+            # Calculate confidence score
+            confidence = sum(food.confidence for food in detected_foods) / len(detected_foods) if detected_foods else 0
+            
+            # Log meal to database
+            nutrition_db.log_meal(
+                user_id=int(user_id) if user_id.isdigit() else 123,
+                image_path="/temp/meal_image.jpg",  # Placeholder path
+                detected_foods=detected_foods_dict,
+                total_protein=total_protein,
+                total_calories=total_calories,
+                confidence=confidence
+            )
+            
+            logger.info(f"Meal data stored for user {user_id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to store meal data: {e}")
+            # Fallback to in-memory storage
+            if user_id not in self.meal_history:
+                self.meal_history[user_id] = []
+            
+            meal_data = {
+                'timestamp': datetime.now().isoformat(),
+                'foods': [food.name for food in detected_foods],
+                'total_protein': total_protein,
+                'total_calories': total_calories
+            }
+            
+            self.meal_history[user_id].append(meal_data)
     
     async def get_recommendations(self, user_id: str, target_protein: Optional[float] = None, 
                                 activity_level: str = "moderate") -> Dict:

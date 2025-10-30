@@ -1,0 +1,17 @@
+[
+  "age",
+  "experience_years",
+  "workout_frequency",
+  "avg_sleep_hours",
+  "stress_level",
+  "recovery_days",
+  "hrv_avg",
+  "resting_hr",
+  "injury_history",
+  "nutrition_quality",
+  "gender_M",
+  "gender_F",
+  "intensity_moderate",
+  "intensity_high",
+  "intensity_extreme"
+]

@@ -13,6 +13,12 @@ from pathlib import Path
 backend_path = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_path))
 
+# Import database module for new endpoints
+from database.nutrition_db import nutrition_db
+
+# Import burnout module for real integration
+from modules.burnout import BurnoutPredictor
+
 # Import the actual modules
 from modules.nutrition import ProteinOptimizer
 
@@ -152,7 +158,6 @@ class MockBurnoutPredictor:
 
 # Keep mock modules for non-nutrition features
 biomechanics_coach = MockBiomechanicsCoach()
-burnout_predictor = MockBurnoutPredictor()
 
 # Initialize actual modules
 try:
@@ -161,6 +166,13 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize ProteinOptimizer: {e}")
     protein_optimizer = None
+
+try:
+    burnout_predictor = BurnoutPredictor()
+    logger.info("Successfully initialized BurnoutPredictor")
+except Exception as e:
+    logger.error(f"Failed to initialize BurnoutPredictor: {e}")
+    burnout_predictor = MockBurnoutPredictor()
 
 @app.get("/")
 async def root():
@@ -336,6 +348,67 @@ async def get_nutrition_recommendations(
     except Exception as e:
         logger.error(f"Nutrition recommendations error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/nutrition/history/{user_id}")
+async def get_nutrition_history(user_id: int, days: int = 7):
+    """Get user's meal history"""
+    try:
+        meals = nutrition_db.get_recent_meals(user_id, days=days)
+        return {
+            "user_id": user_id,
+            "days": days,
+            "meal_count": len(meals),
+            "meals": meals
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/nutrition/stats/{user_id}")
+async def get_nutrition_stats(user_id: int, days: int = 7):
+    """Get aggregated nutrition statistics"""
+    try:
+        meals = nutrition_db.get_recent_meals(user_id, days=days)
+        
+        if not meals:
+            return {"error": "No meal data found"}
+        
+        total_protein = sum(m['total_protein'] for m in meals)
+        total_calories = sum(m['total_calories'] for m in meals)
+        avg_protein = total_protein / len(meals)
+        avg_calories = total_calories / len(meals)
+        
+        return {
+            "user_id": user_id,
+            "days": days,
+            "total_meals": len(meals),
+            "total_protein": round(total_protein, 1),
+            "total_calories": round(total_calories, 1),
+            "avg_protein_per_meal": round(avg_protein, 1),
+            "avg_calories_per_meal": round(avg_calories, 1)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/nutrition/foods")
+async def list_all_foods():
+    """Get list of all foods in database"""
+    try:
+        session = None
+        try:
+            session = nutrition_db.SessionLocal()
+            from sqlalchemy import text
+            foods = session.execute(text("SELECT food_name, food_category FROM food_items ORDER BY food_name"))
+            result = [{"name": row[0], "category": row[1]} for row in foods]
+            return {"count": len(result), "foods": result}
+        finally:
+            if session is not None:
+                try:
+                    session.close()
+                except Exception:
+                    pass
+    except Exception as e:
+        # Graceful fallback when DB is not running
+        return {"count": 0, "foods": [], "note": "Database unavailable; start PostgreSQL to list foods."}
 
 # Burnout Prediction Endpoints
 @app.post("/burnout/analyze")

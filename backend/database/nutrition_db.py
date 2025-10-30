@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # Database URL - In production, use environment variables
 DATABASE_URL = os.getenv(
     "NUTRITION_DATABASE_URL", 
-    "postgresql://username:password@localhost:5432/fitbalance_nutrition"
+    "postgresql://postgres:fitbalance123@localhost:5432/fitbalance_nutrition"
 )
 
 Base = declarative_base()

@@ -1,0 +1,23 @@
+{
+  "c_index_train": 0.8366684805375968,
+  "c_index_test": 0.8417558345269188,
+  "n_train": 1600,
+  "n_test": 400,
+  "features": [
+    "age",
+    "experience_years",
+    "workout_frequency",
+    "avg_sleep_hours",
+    "stress_level",
+    "recovery_days",
+    "hrv_avg",
+    "resting_hr",
+    "injury_history",
+    "nutrition_quality",
+    "gender_M",
+    "gender_F",
+    "intensity_moderate",
+    "intensity_high",
+    "intensity_extreme"
+  ]
+}
