@@ -1,11 +1,16 @@
 import { useState, useRef, useEffect } from "react";
-import { Camera, Upload, TrendingUp, Target, AlertCircle } from "lucide-react";
+import { Camera, Upload, TrendingUp, Target, AlertCircle, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useNutrition } from "@/hooks/use-fitbalance";
 import { useToast } from "@/hooks/use-toast";
+import { useNutritionHistory, useNutritionStats } from '@/hooks/use-fitbalance';
+import { LoadingSpinner } from '@/components/LoadingSpinner';
+import {
+  LineChart as ReLineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
+} from 'recharts';
 
 export default function Nutrition() {
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
@@ -17,6 +22,27 @@ export default function Nutrition() {
   
   const { isLoading: isAnalyzing, error, analysis, analyzeMeal } = useNutrition();
   const { toast } = useToast();
+
+  const [historyDays, setHistoryDays] = useState(7);
+  const currentUserId = 123; // In production, get from auth context
+
+  const { data: history, isLoading: isLoadingHistory } = useNutritionHistory(currentUserId, historyDays);
+  const { data: stats, isLoading: isLoadingStats } = useNutritionStats(currentUserId, 7);
+
+  // Helper for weekly chart
+  const processWeeklyData = (meals: any[]) => {
+    const dailyData: { [key: string]: { protein: number; calories: number; count: number } } = {};
+    meals.forEach(meal => {
+      const date = new Date(meal.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      if (!dailyData[date]) dailyData[date] = { protein: 0, calories: 0, count: 0 };
+      dailyData[date].protein += meal.total_protein || 0;
+      dailyData[date].calories += meal.total_calories || 0;
+      dailyData[date].count += 1;
+    });
+    return Object.entries(dailyData)
+      .map(([date, data]) => ({ date, protein: Math.round(data.protein), calories: Math.round(data.calories) }))
+      .slice(-7);
+  };
 
   // Effect to handle video element when stream changes
   useEffect(() => {
@@ -244,49 +270,46 @@ export default function Nutrition() {
           </p>
         </div>
 
-        {/* Today's Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 animate-slide-up">
-          {[
-            { 
-              label: "Calories", 
-              value: analysis?.total_calories ? Math.round(analysis.total_calories).toString() : "0", 
-              target: "2000", 
-              color: "text-primary" 
-            },
-            { 
-              label: "Protein", 
-              value: analysis?.total_protein ? `${Math.round(analysis.total_protein)}g` : "0g", 
-              target: "150g", 
-              color: "text-secondary" 
-            },
-            { 
-              label: "Carbs", 
-              value: analysis?.total_carbs ? `${Math.round(analysis.total_carbs)}g` : "0g", 
-              target: "250g", 
-              color: "text-orange-500" 
-            },
-            { 
-              label: "Fat", 
-              value: analysis?.total_fat ? `${Math.round(analysis.total_fat)}g` : "0g", 
-              target: "65g", 
-              color: "text-purple-500" 
-            },
-          ].map((stat, index) => (
-            <Card key={index} className="glass-card">
-              <CardContent className="pt-6">
-                <div className="text-center">
-                  <div className={`text-2xl font-bold ${stat.color} mb-1`}>
-                    {stat.value}
+        {/* Daily Progress Dashboard */}
+        {(isLoadingStats ? <LoadingSpinner message="Loading stats..." /> :
+          <Card className="glass-card mb-6 animate-slide-up">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <TrendingUp className="h-5 w-5 text-primary" />
+                Daily Nutrition Progress
+              </CardTitle>
+              <CardDescription>Your nutrition goals for today</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {/* Protein Progress */}
+                <div>
+                  <div className="flex justify-between mb-2">
+                    <span className="text-sm font-medium">Protein</span>
+                    <span className="text-sm text-muted-foreground">{stats?.total_protein || 0}g / 150g</span>
                   </div>
-                  <div className="text-xs text-muted-foreground">
-                    of {stat.target}
-                  </div>
-                  <div className="text-xs font-medium mt-1">{stat.label}</div>
+                  <Progress value={((stats?.total_protein || 0) / 150) * 100} className="h-3" />
                 </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                {/* Calories Progress */}
+                <div>
+                  <div className="flex justify-between mb-2">
+                    <span className="text-sm font-medium">Calories</span>
+                    <span className="text-sm text-muted-foreground">{stats?.total_calories || 0} / 2000</span>
+                  </div>
+                  <Progress value={((stats?.total_calories || 0) / 2000) * 100} className="h-3" />
+                </div>
+                {/* Meal Count */}
+                <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Camera className="h-4 w-4 text-secondary" />
+                    <span className="text-sm font-medium">Meals Logged Today</span>
+                  </div>
+                  <span className="text-2xl font-bold text-primary">{stats?.total_meals || 0}</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>)
+        }
 
         {/* Error Alert */}
         {(error || cameraError) && (
@@ -572,6 +595,85 @@ export default function Nutrition() {
                   ? "Analyzing your meal..." 
                   : "Analyze your first meal to receive personalized nutritional insights"
                 }
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Meal History */}
+        <Card className="glass-card mt-6 animate-slide-up">
+          <CardHeader>
+            <CardTitle className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <BarChart3 className="h-5 w-5 text-secondary" /> Recent Meals
+              </div>
+              <Button variant="outline" size="sm" onClick={() => setHistoryDays(historyDays === 7 ? 30 : 7)}>
+                {historyDays === 7 ? 'Last 7 Days' : 'Last 30 Days'}
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {isLoadingHistory ? <LoadingSpinner message="Loading meal history..." /> :
+              (history?.meals && history.meals.length > 0 ? (
+                <div className="space-y-3">
+                  {history.meals.map((meal: any, index: number) => (
+                    <div key={index} className="p-4 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors">
+                      <div className="flex justify-between items-start mb-2">
+                        <div>
+                          <p className="font-medium">{new Date(meal.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
+                          <p className="text-xs text-muted-foreground">{new Date(meal.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-semibold text-primary">{Math.round(meal.total_protein)}g protein</p>
+                          <p className="text-xs text-muted-foreground">{Math.round(meal.total_calories)} cal</p>
+                        </div>
+                      </div>
+                      {/* Detected Foods */}
+                      {meal.detected_foods && Object.keys(meal.detected_foods).length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {Object.keys(meal.detected_foods).map((foodName, i) => (
+                            <span key={i} className="text-xs px-2 py-1 bg-secondary/20 text-secondary rounded-full">{foodName.replace(/_/g, ' ')}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Camera className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                  <p>No meals logged yet</p>
+                  <p className="text-sm">Start by capturing your first meal!</p>
+                </div>
+              ))}
+          </CardContent>
+        </Card>
+
+        {/* Weekly Analytics Chart */}
+        <Card className="glass-card mt-6 animate-slide-up">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <BarChart3 className="h-5 w-5 text-primary" /> Weekly Nutrition Trends
+            </CardTitle>
+            <CardDescription>Your protein and calorie intake over time</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {history?.meals && history.meals.length > 0 ? (
+              <ResponsiveContainer width="100%" height={300}>
+                <ReLineChart data={processWeeklyData(history.meals)}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                  <XAxis dataKey="date" stroke="currentColor" style={{ fontSize: '12px' }} />
+                  <YAxis stroke="currentColor" style={{ fontSize: '12px' }} />
+                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }} />
+                  <Legend />
+                  <Line type="monotone" dataKey="protein" stroke="hsl(var(--primary))" strokeWidth={2} name="Protein (g)" />
+                  <Line type="monotone" dataKey="calories" stroke="hsl(var(--secondary))" strokeWidth={2} name="Calories" />
+                </ReLineChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>Not enough data to show trends</p>
+                <p className="text-sm">Log more meals to see your progress!</p>
               </div>
             )}
           </CardContent>

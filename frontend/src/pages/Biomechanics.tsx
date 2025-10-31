@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Video, Upload, TrendingUp, AlertCircle, Camera, Square, Play, StopCircle } from "lucide-react";
+import { Video, Upload, TrendingUp, AlertCircle, Camera, Square, Play, StopCircle, Lightbulb, Activity, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -8,6 +8,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useBiomechanics } from "@/hooks/use-fitbalance";
 import { useToast } from "@/hooks/use-toast";
 import SimpleCameraTest from "@/components/SimpleCameraTest";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { TorqueHeatmap } from '@/components/TorqueHeatmap';
 
 const exercises = [
   "Squat",
@@ -613,6 +615,142 @@ export default function Biomechanics() {
             )}
           </CardContent>
         </Card>
+
+        {analysis && (
+  <>
+    <Card className="glass-card mt-6 animate-slide-up">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <TrendingUp className="h-5 w-5 text-primary" />
+          Form Analysis Results
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="text-center mb-6">
+          <div className="relative inline-flex items-center justify-center w-32 h-32">
+            <svg className="w-full h-full transform -rotate-90">
+              <circle cx="64" cy="64" r="56" stroke="currentColor" strokeWidth="8" fill="none" className="text-muted" />
+              <circle cx="64" cy="64" r="56" stroke="currentColor" strokeWidth="8" fill="none"
+                strokeDasharray={`${2 * Math.PI * 56}`}
+                strokeDashoffset={`${2 * Math.PI * 56 * (1 - (analysis.form_score ?? 0) / 100)}`}
+                className={`
+                  ${analysis.form_score >= 80 ? 'text-green-500' : ''}
+                  ${analysis.form_score >= 60 && analysis.form_score < 80 ? 'text-yellow-500' : ''}
+                  ${analysis.form_score < 60 ? 'text-red-500' : ''}
+                `}
+                strokeLinecap="round"
+              />
+            </svg>
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <span className="text-4xl font-bold">{Math.round(analysis.form_score ?? 0)}</span>
+              <span className="text-xs text-muted-foreground">Form Score</span>
+            </div>
+          </div>
+          <p className="mt-4 text-sm text-muted-foreground">
+            {analysis.form_score >= 80 && 'Excellent form! Keep it up.'}
+            {analysis.form_score >= 60 && analysis.form_score < 80 && 'Good form with room for improvement.'}
+            {analysis.form_score < 60 && 'Form needs work. Review recommendations below.'}
+          </p>
+        </div>
+        {/* Joint Angles */}
+        {analysis.joint_angles && (
+          <div className="space-y-3">
+            <h4 className="font-semibold text-sm">Joint Angles</h4>
+            {Object.entries(analysis.joint_angles).map(([joint, angle]) => (
+              <div key={joint} className="space-y-1">
+                <div className="flex justify-between text-sm">
+                  <span className="capitalize">{joint.replace('_', ' ')}</span>
+                  <span className="font-medium">{Math.round(angle as number)}°</span>
+                </div>
+                <Progress value={((angle as number) / 180) * 100} className="h-2" />
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+    {/* Risk Factors */}
+    {analysis.risk_factors && analysis.risk_factors.length > 0 && (
+      <Card className="glass-card mt-6 animate-slide-up border-orange-500/50">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-orange-600">
+            <AlertCircle className="h-5 w-5" />
+            Risk Factors Detected
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            {analysis.risk_factors.map((risk, index) => (
+              <Alert key={index} variant="destructive" className="bg-orange-50 border-orange-200">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  {risk.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                </AlertDescription>
+              </Alert>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    )}
+    {/* Recommendations */}
+    {analysis.recommendations && analysis.recommendations.length > 0 && (
+      <Card className="glass-card mt-6 animate-slide-up">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Lightbulb className="h-5 w-5 text-yellow-500" />
+            Personalized Recommendations
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-3">
+            {analysis.recommendations.map((rec, index) => (
+              <div key={index} className="flex items-start gap-3 p-3 bg-muted/30 rounded-lg">
+                <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
+                <p className="text-sm">{rec}</p>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    )}
+    {/* Torque Heatmaps: Only show if heatmap_data present */}
+    {analysis.heatmap_data && (
+      <Card className="glass-card mt-6 animate-slide-up">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Activity className="h-5 w-5 text-primary" />
+            Torque Heatmap Analysis
+          </CardTitle>
+          <CardDescription>
+            Visual representation of joint stress during movement
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Tabs defaultValue="knee" className="w-full">
+            <TabsList className="grid w-full grid-cols-4">
+              <TabsTrigger value="knee">Knee</TabsTrigger>
+              <TabsTrigger value="hip">Hip</TabsTrigger>
+              <TabsTrigger value="ankle">Ankle</TabsTrigger>
+              <TabsTrigger value="back">Back</TabsTrigger>
+            </TabsList>
+            <TabsContent value="knee" className="mt-4">
+              <TorqueHeatmap data={analysis.heatmap_data} jointName="knee" />
+            </TabsContent>
+            <TabsContent value="hip" className="mt-4">
+              <TorqueHeatmap data={analysis.heatmap_data} jointName="hip" />
+            </TabsContent>
+            <TabsContent value="ankle" className="mt-4">
+              <TorqueHeatmap data={analysis.heatmap_data} jointName="ankle" />
+            </TabsContent>
+            <TabsContent value="back" className="mt-4">
+              <TorqueHeatmap data={analysis.heatmap_data} jointName="back" />
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
+    )}
+  </>
+)}
 
         {/* Analysis Results Placeholder */}
         <div className="grid md:grid-cols-2 gap-6 animate-slide-up">

@@ -1,16 +1,97 @@
-# fitbalance
+# FitBalance Frontend
 
-A new Flutter project.
+[![React 18](https://img.shields.io/badge/React-18-blue)](https://react.dev/) [![Vite](https://img.shields.io/badge/Vite-frontend-brightgreen)](https://vitejs.dev/) [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue)](https://www.typescriptlang.org/)
 
-## Getting Started
+**Modern nutrition, biomechanics, and burnout dashboard with camera, video, analytics, and full API connectivity.**
 
-This project is a starting point for a Flutter application.
+---
 
-A few resources to get you started if this is your first Flutter project:
+## 🚀 Quick Start
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+1. **Install dependencies (from `frontend/` directory):**
+   ```bash
+   npm install
+   ```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+2. **Configure the Backend API URL:**
+   - Copy `.env.local.example` to `.env.local` (or create manually).
+   - Ensure `VITE_API_URL` matches your backend (default: `http://localhost:8000`).
+
+3. **Run the Dev Server:**
+   ```bash
+   npm run dev
+   # Open http://localhost:8081
+   ```
+
+4. **Run Tests:**
+   ```bash
+   npm test
+   # or with UI coverage
+   npm run test:ui
+   npm run test:coverage
+   ```
+
+5. **Build for Production:**
+   ```bash
+   npm run build
+   npm run preview
+   # Open the preview URL in your browser
+   ```
+
+---
+
+## 🖥️ Pages & Functionality
+
+- **/nutrition**  
+  Camera-based meal capture, daily stats dashboard, history chart, and AI-driven nutritional analysis.
+- **/biomechanics**  
+  Video upload/capture, form analysis, torque heatmaps, risk detection, and smart coaching recommendations.
+- **/burnout**  
+  Burnout risk calculator, survival curves, recommendations, and actionable metrics.
+- **Mobile Responsive**  
+  Unified design with MobileNav and adaptive UI for iPhone, Android, and desktop.
+
+---
+
+## 📚 Documentation
+- See [`FRONTEND_GUIDE.md`](./FRONTEND_GUIDE.md) for: 
+  - Full tech stack outline
+  - Directory/project structure
+  - Component design standards
+  - Pages feature walkthrough and checklist
+  - Troubleshooting, testing, and deployment
+
+---
+
+## 🧪 Testing
+- Unit and integration tests: [Vitest](https://vitest.dev/)
+- UI coverage and debugging: `npm run test:ui`
+- Snapshot, hooks, and async query tests built in `/src/test/`
+
+---
+
+## 🤝 Contributing
+- PRs welcome. See [contributing guidelines](../docs/CONTRIBUTING.md)
+
+---
+
+## 🛠️ Tech Stack Quick Reference
+- React 18 + TypeScript (SPA)
+- Vite build tool
+- TailwindCSS utility styling
+- shadcn/ui + Lucide icons
+- React Router
+- React Query (TanStack)
+- Recharts + @nivo/heatmap (analytics/visualization)
+- Vitest + Testing Library (testing)
+
+---
+
+## 🟢 Status
+**All Person 3 (Frontend) deliverables are complete & tested.**
+
+API backend connectivity required for full analytics and chart data. If you encounter issues, verify backend API is live and `.env.local` is configured correctly.
+
+---
+
+## © 2025 FitBalance | Built for project demo and production launch.
