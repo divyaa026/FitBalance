@@ -1,5 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from "react";
+<<<<<<< HEAD
 import { Video, Upload, TrendingUp, AlertCircle, Camera, Square, Play, StopCircle, Lightbulb, Activity, CheckCircle } from "lucide-react";
+=======
+import { Video, Upload, TrendingUp, AlertCircle, Camera, Square, Play, StopCircle, Activity } from "lucide-react";
+>>>>>>> 633c84e602780eab5038f97c9beaa390e270d288
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -8,8 +12,13 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useBiomechanics } from "@/hooks/use-fitbalance";
 import { useToast } from "@/hooks/use-toast";
 import SimpleCameraTest from "@/components/SimpleCameraTest";
+<<<<<<< HEAD
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { TorqueHeatmap } from '@/components/TorqueHeatmap';
+=======
+import TorqueHeatmap from '@/components/TorqueHeatmap';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+>>>>>>> 633c84e602780eab5038f97c9beaa390e270d288
 
 const exercises = [
   "Squat",
@@ -27,13 +36,13 @@ export default function Biomechanics() {
   const [cameraPermission, setCameraPermission] = useState<'granted' | 'denied' | 'prompt'>('prompt');
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
-  
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunks = useRef<Blob[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
-  
+
   const { isLoading: isAnalyzing, error, analysis, analyzeMovement } = useBiomechanics();
   const { toast } = useToast();
 
@@ -53,37 +62,37 @@ export default function Biomechanics() {
     if (stream && videoRef.current) {
       console.log('Effect: Setting up video element with stream');
       const video = videoRef.current;
-      
+
       // Reset video element completely
       video.srcObject = null;
       video.load();
-      
+
       // Set new source
       video.srcObject = stream;
-      
+
       const handleLoadedMetadata = () => {
         console.log('Effect: Video metadata loaded', {
           width: video.videoWidth,
           height: video.videoHeight,
           readyState: video.readyState
         });
-        
+
         // Ensure video plays
         video.play().catch(err => {
           console.error('Effect: Play failed:', err);
         });
       };
-      
+
       const handleCanPlay = () => {
         console.log('Effect: Video can play');
         if (video.paused) {
           video.play().catch(console.error);
         }
       };
-      
+
       video.addEventListener('loadedmetadata', handleLoadedMetadata);
       video.addEventListener('canplay', handleCanPlay);
-      
+
       // Cleanup function
       return () => {
         video.removeEventListener('loadedmetadata', handleLoadedMetadata);
@@ -105,10 +114,10 @@ export default function Biomechanics() {
     try {
       console.log('Requesting camera access...');
       setVideoError(null);
-      
+
       // Start with the simplest possible constraints
       let mediaStream;
-      
+
       try {
         // Try simple constraints first
         mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -120,36 +129,36 @@ export default function Biomechanics() {
         console.log('Simple constraints failed, trying with specific settings...');
         // If simple fails, try with more specific constraints
         mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { 
-            width: { min: 320, ideal: 640, max: 1280 }, 
+          video: {
+            width: { min: 320, ideal: 640, max: 1280 },
             height: { min: 240, ideal: 480, max: 720 },
             frameRate: { ideal: 30, max: 60 }
           },
           audio: false
         });
       }
-      
+
       console.log('Camera stream obtained!');
       console.log('Stream details:', {
         id: mediaStream.id,
         active: mediaStream.active,
         videoTracks: mediaStream.getVideoTracks().length
       });
-      
+
       if (mediaStream.getVideoTracks().length === 0) {
         throw new Error('No video tracks available');
       }
-      
+
       const videoTrack = mediaStream.getVideoTracks()[0];
       console.log('Video track settings:', videoTrack.getSettings());
       console.log('Video track state:', videoTrack.readyState);
-      
+
       setStream(mediaStream);
       setVideoError(null);
       setCameraPermission('granted');
-      
+
       // Don't set srcObject here - let the useEffect handle it
-      
+
       toast({
         title: "Camera Access Granted",
         description: "Camera is ready for recording.",
@@ -180,7 +189,7 @@ export default function Biomechanics() {
     if (!stream || !selectedExercise) return;
 
     recordedChunks.current = [];
-    
+
     const mediaRecorder = new MediaRecorder(stream, {
       mimeType: 'video/webm;codecs=vp8'
     });
@@ -195,7 +204,7 @@ export default function Biomechanics() {
       const blob = new Blob(recordedChunks.current, { type: 'video/webm' });
       const url = URL.createObjectURL(blob);
       setRecordedVideoUrl(url);
-      
+
       // Auto-analyze the recorded video
       analyzeRecordedVideo(blob);
     };
@@ -203,7 +212,7 @@ export default function Biomechanics() {
     mediaRecorderRef.current = mediaRecorder;
     mediaRecorder.start();
     setIsRecording(true);
-    
+
     toast({
       title: "Recording Started",
       description: "Recording your exercise. Click stop when finished.",
@@ -214,7 +223,7 @@ export default function Biomechanics() {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
-      
+
       toast({
         title: "Recording Stopped",
         description: "Processing your video for analysis...",
@@ -227,9 +236,9 @@ export default function Biomechanics() {
       const file = new File([videoBlob], `exercise-${selectedExercise}-${Date.now()}.webm`, {
         type: 'video/webm'
       });
-      
+
       await analyzeMovement(file, selectedExercise, 'user123');
-      
+
       toast({
         title: "Analysis Complete",
         description: "Your exercise has been analyzed successfully!",
@@ -246,15 +255,15 @@ export default function Biomechanics() {
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     console.log('File upload triggered!', event);
-    
+
     const file = event.target.files?.[0];
     console.log('Selected file:', file);
-    
+
     if (!file) {
       console.log('No file selected');
       return;
     }
-    
+
     if (!selectedExercise) {
       console.log('No exercise selected');
       toast({
@@ -283,11 +292,11 @@ export default function Biomechanics() {
         title: "Uploading Video",
         description: "Your video is being analyzed...",
       });
-      
+
       console.log('Calling analyzeMovement...');
       const result = await analyzeMovement(file, selectedExercise, 'user123');
       console.log('Analysis result:', result);
-      
+
       toast({
         title: "Upload Successful",
         description: "Your video has been analyzed successfully!",
@@ -300,7 +309,7 @@ export default function Biomechanics() {
         variant: "destructive",
       });
     }
-    
+
     // Reset file input
     if (event.target) {
       event.target.value = '';
@@ -335,11 +344,11 @@ export default function Biomechanics() {
         title: "Uploading Photo",
         description: "Your photo is being analyzed...",
       });
-      
+
       // For now, we'll treat photos similar to videos for analysis
       // In a real implementation, you might have a separate endpoint for photos
       await analyzeMovement(file, selectedExercise, 'user123');
-      
+
       toast({
         title: "Upload Successful",
         description: "Your photo has been analyzed successfully!",
@@ -352,7 +361,7 @@ export default function Biomechanics() {
         variant: "destructive",
       });
     }
-    
+
     // Reset file input
     if (event.target) {
       event.target.value = '';
@@ -446,7 +455,7 @@ export default function Biomechanics() {
                     playsInline
                     controls={false}
                     className="w-full h-full"
-                    style={{ 
+                    style={{
                       objectFit: 'cover',
                       backgroundColor: '#000000',
                       display: 'block',
@@ -499,7 +508,7 @@ export default function Biomechanics() {
                   <div className="text-center">
                     <Camera className="h-16 w-16 mx-auto mb-4 text-muted-foreground" />
                     <p className="text-muted-foreground mb-4">
-                      {cameraPermission === 'granted' 
+                      {cameraPermission === 'granted'
                         ? 'Camera ready - Select an exercise to start recording'
                         : 'Click "Start Camera" to begin'
                       }
@@ -507,7 +516,7 @@ export default function Biomechanics() {
                   </div>
                 </div>
               )}
-              
+
               {/* Recording indicator */}
               {isRecording && (
                 <div className="absolute top-4 left-4 flex items-center gap-2 bg-red-500 text-white px-3 py-1 rounded-full text-sm font-medium">
@@ -519,7 +528,7 @@ export default function Biomechanics() {
 
             <div className="flex gap-4 flex-wrap">
               {!stream ? (
-                <Button 
+                <Button
                   onClick={startCamera}
                   className="flex-1 gradient-biomechanics text-white font-medium"
                   disabled={isAnalyzing}
@@ -529,7 +538,7 @@ export default function Biomechanics() {
                 </Button>
               ) : !isRecording ? (
                 <>
-                  <Button 
+                  <Button
                     onClick={startRecording}
                     className="flex-1 gradient-biomechanics text-white font-medium"
                     disabled={!selectedExercise || isAnalyzing}
@@ -537,9 +546,9 @@ export default function Biomechanics() {
                     <Video className="mr-2 h-4 w-4" />
                     Start Recording
                   </Button>
-                  <Button 
+                  <Button
                     onClick={stopCamera}
-                    variant="outline" 
+                    variant="outline"
                     className="flex-1 border-red-500 text-red-500 hover:bg-red-500 hover:text-white font-medium"
                   >
                     <Square className="mr-2 h-4 w-4" />
@@ -547,16 +556,16 @@ export default function Biomechanics() {
                   </Button>
                 </>
               ) : (
-                <Button 
+                <Button
                   onClick={stopRecording}
-                  variant="destructive" 
+                  variant="destructive"
                   className="flex-1 bg-red-600 hover:bg-red-700 text-white font-medium"
                 >
                   <StopCircle className="mr-2 h-4 w-4" />
                   Stop Recording
                 </Button>
               )}
-              
+
               {/* Simplified Upload Video Button */}
               <div className="flex-1">
                 <input
@@ -566,8 +575,8 @@ export default function Biomechanics() {
                   onChange={handleFileUpload}
                   style={{ display: 'none' }}
                 />
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   className="w-full border-blue-500 text-blue-600 hover:bg-blue-500 hover:text-white font-medium"
                   disabled={!selectedExercise || isAnalyzing}
                   onClick={() => {
@@ -579,7 +588,7 @@ export default function Biomechanics() {
                   Upload Video
                 </Button>
               </div>
-              
+
               {/* Simplified Upload Photo Button */}
               <div className="flex-1">
                 <input
@@ -589,8 +598,8 @@ export default function Biomechanics() {
                   onChange={handlePhotoUpload}
                   style={{ display: 'none' }}
                 />
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   className="w-full border-green-500 text-green-600 hover:bg-green-500 hover:text-white font-medium"
                   disabled={!selectedExercise || isAnalyzing}
                   onClick={() => {
@@ -767,7 +776,7 @@ export default function Biomechanics() {
                   {analysis?.form_score ? Math.round(analysis.form_score) : '--'}
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  {analysis?.form_score 
+                  {analysis?.form_score
                     ? `${analysis.form_score >= 80 ? 'Excellent' : analysis.form_score >= 60 ? 'Good' : 'Needs Improvement'} form`
                     : 'Record an exercise to see your form score'
                   }
@@ -789,7 +798,7 @@ export default function Biomechanics() {
                   {analysis?.torques?.[0]?.risk_level?.toUpperCase() || '--'}
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  {analysis?.torques?.[0]?.risk_level 
+                  {analysis?.torques?.[0]?.risk_level
                     ? 'Based on joint torque analysis'
                     : 'Risk assessment will appear here'
                   }

@@ -9,9 +9,16 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
+<<<<<<< HEAD
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage"
+=======
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "coverage": "vitest run --coverage"
+>>>>>>> 633c84e602780eab5038f97c9beaa390e270d288
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -73,6 +80,7 @@
     "@types/node": "^22.16.5",
     "@types/react": "^18.3.23",
     "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^5.1.0",
     "@vitejs/plugin-react-swc": "^3.11.0",
     "@vitest/ui": "^4.0.5",
     "autoprefixer": "^10.4.21",
