@@ -8,6 +8,7 @@ import { useNutrition } from "@/hooks/use-fitbalance";
 import { useToast } from "@/hooks/use-toast";
 import { useNutritionHistory, useNutritionStats } from '@/hooks/use-fitbalance';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   LineChart as ReLineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
@@ -22,12 +23,14 @@ export default function Nutrition() {
   
   const { isLoading: isAnalyzing, error, analysis, analyzeMeal } = useNutrition();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   const [historyDays, setHistoryDays] = useState(7);
   const currentUserId = 123; // In production, get from auth context
+  const currentUserIdString = '123'; // String version for API calls
 
-  const { data: history, isLoading: isLoadingHistory } = useNutritionHistory(currentUserId, historyDays);
-  const { data: stats, isLoading: isLoadingStats } = useNutritionStats(currentUserId, 7);
+  const { data: history, isLoading: isLoadingHistory, refetch: refetchHistory } = useNutritionHistory(currentUserId, historyDays);
+  const { data: stats, isLoading: isLoadingStats, refetch: refetchStats } = useNutritionStats(currentUserId, 7);
 
   // Helper for weekly chart
   const processWeeklyData = (meals: any[]) => {
@@ -190,7 +193,11 @@ export default function Nutrition() {
             description: "AI is analyzing your meal photo...",
           });
           
-          await analyzeMeal(file, 'user123', []);
+          await analyzeMeal(file, currentUserIdString, []);
+          
+          // Refresh meal history and stats
+          await refetchHistory();
+          await refetchStats();
           
           toast({
             title: "Analysis Complete",
@@ -231,7 +238,11 @@ export default function Nutrition() {
         description: "Your meal photo is being analyzed...",
       });
       
-      await analyzeMeal(file, 'user123', []);
+      await analyzeMeal(file, currentUserIdString, []);
+      
+      // Refresh meal history and stats
+      await refetchHistory();
+      await refetchStats();
       
       // Show preview of uploaded image
       const imageUrl = URL.createObjectURL(file);

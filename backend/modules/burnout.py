@@ -13,8 +13,20 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import json
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'ml_models', 'burnout'))
-from inference import predict_burnout_risk as predict_with_cox
+
+# Try to import lifelines for Cox PH model
+try:
+    from lifelines import CoxPHFitter, KaplanMeierFitter
+    HAS_LIFELINES = True
+except ImportError:
+    HAS_LIFELINES = False
+
+# Add ml path for burnout inference
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'ml'))
+try:
+    from burnout.inference import predict_burnout_risk as predict_with_cox
+except ImportError:
+    predict_with_cox = None
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +74,7 @@ class BurnoutPredictor:
     def _load_models(self):
         """Load pre-trained Cox PH model"""
         try:
-            model_path = os.path.join(os.path.dirname(__file__), '..', '..', 'ml_models', 'burnout', 'cox_model.pkl')
+            model_path = os.path.join(os.path.dirname(__file__), '..', '..', 'ml', 'burnout', 'cox_model.pkl')
             with open(model_path, 'rb') as f:
                 self.cph_model = pickle.load(f)
             
@@ -73,6 +85,12 @@ class BurnoutPredictor:
     
     def _create_mock_models(self):
         """Create mock models for demonstration"""
+        if not HAS_LIFELINES:
+            logger.warning("lifelines not installed, using simplified mock model")
+            self.cph_model = None
+            self.km_model = None
+            return
+            
         # Generate mock training data
         np.random.seed(42)
         n_samples = 1000

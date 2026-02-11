@@ -257,7 +257,7 @@ export default function Home() {
                 category: "Training",
                 readTime: 5,
                 imageUrl: "https://images.unsplash.com/photo-1517963879433-6ad2b056d712",
-                url: "#",
+                link: "/articles/progressive-overload",
               },
               {
                 id: "2",
@@ -266,7 +266,7 @@ export default function Home() {
                 category: "Nutrition",
                 readTime: 7,
                 imageUrl: "https://images.unsplash.com/photo-1490645935967-10de6ba17061",
-                url: "#",
+                link: "/articles/post-workout-nutrition",
               },
               {
                 id: "3",
@@ -275,7 +275,7 @@ export default function Home() {
                 category: "Wellness",
                 readTime: 6,
                 imageUrl: "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b",
-                url: "#",
+                link: "/articles/mental-benefits",
               }
             ].map((article, index) => (
               <Card key={index} className="glass-card overflow-hidden hover:scale-[1.02] transition-all duration-300">
@@ -298,10 +298,12 @@ export default function Home() {
                     </div>
                     <h3 className="text-2xl font-bold mb-2">{article.title}</h3>
                     <p className="text-muted-foreground mb-4">{article.description}</p>
-                    <Button className="group">
-                      Read More
-                      <ArrowRight className="ml-2 h-4 w-4 group-hover:translate-x-1 transition-transform" />
-                    </Button>
+                    <Link to={article.link}>
+                      <Button className="group">
+                        Read More
+                        <ArrowRight className="ml-2 h-4 w-4 group-hover:translate-x-1 transition-transform" />
+                      </Button>
+                    </Link>
                   </div>
                 </div>
               </Card>

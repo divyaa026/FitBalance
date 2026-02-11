@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 import uvicorn
 from typing import List, Optional
 import logging
@@ -21,6 +22,7 @@ from modules.burnout import BurnoutPredictor
 
 # Import the actual modules
 from modules.nutrition import ProteinOptimizer
+from modules.biomechanics import BiomechanicsCoach
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -156,10 +158,15 @@ class MockBurnoutPredictor:
             ]
         }
 
-# Keep mock modules for non-nutrition features
-biomechanics_coach = MockBiomechanicsCoach()
-
 # Initialize actual modules
+try:
+    biomechanics_coach = BiomechanicsCoach()
+    logger.info("Successfully initialized BiomechanicsCoach")
+except Exception as e:
+    logger.error(f"Failed to initialize BiomechanicsCoach: {e}")
+    biomechanics_coach = MockBiomechanicsCoach()
+    logger.info("Using MockBiomechanicsCoach as fallback")
+
 try:
     protein_optimizer = ProteinOptimizer()
     logger.info("Successfully initialized ProteinOptimizer")
@@ -203,18 +210,80 @@ async def analyze_biomechanics(
     exercise_type: str = "squat",
     user_id: str = "default"
 ):
-    """Analyze biomechanics from uploaded video"""
+    """Analyze biomechanics from uploaded video or photo"""
     try:
-        if not video_file.content_type.startswith("video/"):
-            raise HTTPException(status_code=400, detail="File must be a video")
+        logger.info(f"Received biomechanics analysis request: exercise={exercise_type}, user={user_id}, file={video_file.filename}")
         
-        # Save video temporarily and analyze
+        # Accept both video and image files
+        if not (video_file.content_type.startswith("video/") or video_file.content_type.startswith("image/")):
+            raise HTTPException(status_code=400, detail="File must be a video or image")
+        
+        # Analyze movement
         result = await biomechanics_coach.analyze_movement(
             video_file, exercise_type, user_id
         )
-        return result
+        
+        # Check if valid exercise was detected
+        if not result.is_valid_exercise:
+            return {
+                "is_valid_exercise": False,
+                "error_message": result.error_message,
+                "exercise_type": result.exercise_type,
+                "form_score": 0,
+                "risk_factors": [],
+                "recommendations": ["Please upload a video showing a person performing an exercise."],
+                "joint_angles": [],
+                "torques": [],
+                "heatmap_data": {},
+                "form_errors": [],
+                "user_id": user_id,
+                "analysis_method": "GNN-LSTM with MediaPipe pose detection"
+            }
+        
+        # Convert BiomechanicsAnalysis to dict for JSON response
+        # Calculate overall risk level based on form score
+        def get_risk_level(form_score):
+            if form_score < 50:
+                return "high"
+            elif form_score < 70:
+                return "medium"
+            else:
+                return "low"
+        
+        overall_risk_level = get_risk_level(result.form_score)
+        
+        return {
+            "is_valid_exercise": True,
+            "error_message": "",
+            "exercise_type": result.exercise_type,
+            "form_score": result.form_score,
+            "risk_factors": result.risk_factors,
+            "recommendations": result.recommendations,
+            "joint_angles": [
+                {"joint_name": joint, "angle": angle, "is_abnormal": False}
+                for joint, angle in result.joint_angles.items()
+            ],
+            "torques": [
+                {"joint_name": joint, "torque_magnitude": sum(torques) / len(torques) if torques else 0, "risk_level": overall_risk_level}
+                for joint, torques in result.torque_data.items()
+            ],
+            "heatmap_data": result.heatmap_data,
+            "form_errors": [
+                {
+                    "body_part": err.body_part,
+                    "issue": err.issue,
+                    "current_value": err.current_value,
+                    "expected_range": list(err.expected_range),
+                    "severity": err.severity,
+                    "correction_tip": err.correction_tip
+                }
+                for err in (result.form_errors or [])
+            ],
+            "user_id": user_id,
+            "analysis_method": "GNN-LSTM with MediaPipe pose detection"
+        }
     except Exception as e:
-        logger.error(f"Biomechanics analysis error: {str(e)}")
+        logger.error(f"Biomechanics analysis error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/biomechanics/heatmap/{user_id}")
@@ -411,20 +480,21 @@ async def list_all_foods():
         return {"count": 0, "foods": [], "note": "Database unavailable; start PostgreSQL to list foods."}
 
 # Burnout Prediction Endpoints
-@app.post("/burnout/analyze")
-async def analyze_burnout_risk(
-    user_id: str,
-    workout_frequency: int,
-    sleep_hours: float,
-    stress_level: int,  # 1-10 scale
-    recovery_time: int,  # days
+class BurnoutAnalysisRequest(BaseModel):
+    user_id: str
+    workout_frequency: int
+    sleep_hours: float
+    stress_level: int  # 1-10 scale
+    recovery_time: int  # days
     performance_trend: str = "stable"  # improving, stable, declining
-):
+
+@app.post("/burnout/analyze")
+async def analyze_burnout_risk(request: BurnoutAnalysisRequest):
     """Analyze burnout risk based on user metrics"""
     try:
         risk_analysis = await burnout_predictor.analyze_risk(
-            user_id, workout_frequency, sleep_hours, 
-            stress_level, recovery_time, performance_trend
+            request.user_id, request.workout_frequency, request.sleep_hours, 
+            request.stress_level, request.recovery_time, request.performance_trend
         )
         return risk_analysis
     except Exception as e:

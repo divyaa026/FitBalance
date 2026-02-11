@@ -4,7 +4,18 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
 // Types for API responses
+export interface FormError {
+  body_part: string;
+  issue: string;
+  current_value: number;
+  expected_range: [number, number];
+  severity: 'minor' | 'moderate' | 'severe';
+  correction_tip: string;
+}
+
 export interface BiomechanicsAnalysis {
+  is_valid_exercise: boolean;
+  error_message: string;
   form_score: number;
   joint_angles: Array<{
     joint_name: string;
@@ -19,6 +30,8 @@ export interface BiomechanicsAnalysis {
   recommendations: string[];
   exercise_type: string;
   user_id: string;
+  form_errors: FormError[];
+  heatmap_data?: Record<string, number[][]>;
 }
 
 export interface FoodItem {

@@ -36,10 +36,12 @@ biomechanics_dataset_large.json
 biomechanics_dataset_large.csv
 *.json[large]
 *.csv[large]
-datasets/biomechanics/landmark_sequences/*.npy
-datasets/burnout/*.csv
-nutrition/augmented_indian_food_dataset/
-nutrition/Indian Food Images/
+data/biomechanics/landmark_sequences/*.npy
+data/burnout/*.csv
+data/nutrition/augmented_indian_food_dataset/
+data/nutrition/Indian Food Images/
+data/nutrition/**/*.jpg
+data/nutrition/**/*.png
 
 # Temporary files
 *.tmp

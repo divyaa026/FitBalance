@@ -1,0 +1,25 @@
+
+Manual Download Required for RepNet Dataset
+======================================================================
+
+Dataset: RepNet Dataset
+Description: Repetitive action counting
+Video Count: 250
+Exercises: squat, bench_press, deadlift
+
+Instructions:
+1. Visit: https://sites.google.com/view/repnet
+2. Download the dataset
+3. Extract to: datasets\biomechanics_real\repnet\videos
+4. Run the preprocessing script: python datasets/preprocess_public_datasets.py
+
+After manual download, your directory structure should be:
+datasets\biomechanics_real\repnet/
+ videos/
+    exercise1/
+       video001.mp4
+       video002.mp4
+       ...
+    exercise2/
+        ...
+ labels.json (if available)

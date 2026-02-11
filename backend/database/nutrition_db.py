@@ -252,10 +252,13 @@ class NutritionDatabase:
     def get_food_nutrition(self, food_name: str) -> Optional[Dict]:
         """Get nutritional information for a food item"""
         try:
+            # Normalize the food name
+            normalized_name = self._normalize_food_name(food_name)
+            
             if self.engine:
                 session = self.SessionLocal()
                 food_item = session.query(FoodItems).filter(
-                    FoodItems.food_name == food_name
+                    FoodItems.food_name == normalized_name
                 ).first()
                 session.close()
                 
@@ -267,18 +270,150 @@ class NutritionDatabase:
                         'calories': food_item.calories_per_100g,
                         'category': food_item.food_category
                     }
-            else:
-                # Fallback: basic food database
-                food_db = {
-                    "chicken_breast": {"protein": 31.0, "carbs": 0.0, "fat": 3.6, "calories": 165},
-                    "salmon": {"protein": 25.0, "carbs": 0.0, "fat": 12.0, "calories": 208},
-                    "broccoli": {"protein": 2.8, "carbs": 7.0, "fat": 0.4, "calories": 34},
-                    "quinoa": {"protein": 4.4, "carbs": 22.0, "fat": 1.9, "calories": 120},
-                }
-                return food_db.get(food_name, {"protein": 0, "carbs": 0, "fat": 0, "calories": 0})
+            
+            # Fallback: comprehensive food database
+            food_db = self._get_comprehensive_food_database()
+            result = food_db.get(normalized_name)
+            
+            if result:
+                return result
+            
+            # Try fuzzy matching for common variations
+            result = self._fuzzy_match_food(normalized_name, food_db)
+            if result:
+                return result
+                
+            # Last resort: return estimated values based on food type
+            logger.warning(f"No nutrition data found for: {food_name}, using estimates")
+            return self._estimate_nutrition(normalized_name)
+            
         except Exception as e:
             logger.error(f"Food nutrition retrieval failed: {e}")
             return None
+    
+    def _normalize_food_name(self, food_name: str) -> str:
+        """Normalize food name for better matching"""
+        normalized = food_name.lower().strip()
+        # Remove common descriptors
+        descriptors = ['grilled', 'roasted', 'steamed', 'boiled', 'baked', 'fried', 
+                      'cooked', 'raw', 'fresh', 'sliced', 'diced', 'chopped', 'sauteed']
+        for desc in descriptors:
+            normalized = normalized.replace(f"{desc}_", "").replace(f"_{desc}", "")
+        return normalized
+    
+    def _get_comprehensive_food_database(self) -> Dict:
+        """Comprehensive food nutrition database (per 100g)"""
+        return {
+            # Proteins
+            "chicken_breast": {"protein": 31.0, "carbs": 0.0, "fat": 3.6, "calories": 165, "category": "protein"},
+            "chicken": {"protein": 31.0, "carbs": 0.0, "fat": 3.6, "calories": 165, "category": "protein"},
+            "turkey_breast": {"protein": 29.0, "carbs": 0.0, "fat": 1.0, "calories": 135, "category": "protein"},
+            "turkey": {"protein": 29.0, "carbs": 0.0, "fat": 1.0, "calories": 135, "category": "protein"},
+            "salmon": {"protein": 25.4, "carbs": 0.0, "fat": 12.4, "calories": 208, "category": "protein"},
+            "salmon_fillet": {"protein": 25.4, "carbs": 0.0, "fat": 12.4, "calories": 208, "category": "protein"},
+            "tuna": {"protein": 30.0, "carbs": 0.0, "fat": 1.0, "calories": 132, "category": "protein"},
+            "tuna_steak": {"protein": 30.0, "carbs": 0.0, "fat": 1.0, "calories": 132, "category": "protein"},
+            "beef": {"protein": 26.0, "carbs": 0.0, "fat": 15.0, "calories": 250, "category": "protein"},
+            "lean_beef": {"protein": 26.0, "carbs": 0.0, "fat": 15.0, "calories": 250, "category": "protein"},
+            "egg": {"protein": 13.0, "carbs": 1.1, "fat": 11.0, "calories": 155, "category": "protein"},
+            "hard_boiled_egg": {"protein": 13.0, "carbs": 1.1, "fat": 11.0, "calories": 155, "category": "protein"},
+            "tofu": {"protein": 15.7, "carbs": 4.0, "fat": 8.0, "calories": 144, "category": "protein"},
+            "greek_yogurt": {"protein": 10.0, "carbs": 3.6, "fat": 0.4, "calories": 59, "category": "dairy"},
+            
+            # Vegetables
+            "broccoli": {"protein": 2.8, "carbs": 7.0, "fat": 0.4, "calories": 34, "category": "vegetable"},
+            "spinach": {"protein": 2.9, "carbs": 3.6, "fat": 0.4, "calories": 23, "category": "vegetable"},
+            "asparagus": {"protein": 2.2, "carbs": 3.9, "fat": 0.2, "calories": 27, "category": "vegetable"},
+            "bell_peppers": {"protein": 1.0, "carbs": 6.0, "fat": 0.3, "calories": 31, "category": "vegetable"},
+            "bell_pepper": {"protein": 1.0, "carbs": 6.0, "fat": 0.3, "calories": 31, "category": "vegetable"},
+            "green_beans": {"protein": 1.8, "carbs": 7.0, "fat": 0.1, "calories": 35, "category": "vegetable"},
+            "carrots": {"protein": 0.9, "carbs": 10.0, "fat": 0.2, "calories": 41, "category": "vegetable"},
+            "lettuce": {"protein": 1.4, "carbs": 2.9, "fat": 0.2, "calories": 15, "category": "vegetable"},
+            "tomato": {"protein": 0.9, "carbs": 3.9, "fat": 0.2, "calories": 18, "category": "vegetable"},
+            "cucumber": {"protein": 0.7, "carbs": 3.6, "fat": 0.1, "calories": 16, "category": "vegetable"},
+            
+            # Carbs
+            "rice": {"protein": 2.7, "carbs": 28.0, "fat": 0.3, "calories": 130, "category": "grain"},
+            "brown_rice": {"protein": 2.6, "carbs": 23.0, "fat": 0.9, "calories": 112, "category": "grain"},
+            "quinoa": {"protein": 4.4, "carbs": 21.3, "fat": 1.9, "calories": 120, "category": "grain"},
+            "quinoa_cooked": {"protein": 4.4, "carbs": 21.3, "fat": 1.9, "calories": 120, "category": "grain"},
+            "sweet_potato": {"protein": 2.0, "carbs": 20.1, "fat": 0.2, "calories": 86, "category": "vegetable"},
+            "potato": {"protein": 2.0, "carbs": 17.0, "fat": 0.1, "calories": 77, "category": "vegetable"},
+            "oats": {"protein": 13.2, "carbs": 67.7, "fat": 6.5, "calories": 389, "category": "grain"},
+            "pasta": {"protein": 5.0, "carbs": 25.0, "fat": 0.9, "calories": 131, "category": "grain"},
+            "bread": {"protein": 9.0, "carbs": 49.0, "fat": 3.2, "calories": 265, "category": "grain"},
+            "white_bread": {"protein": 9.0, "carbs": 49.0, "fat": 3.2, "calories": 265, "category": "grain"},
+            
+            # Fats & Oils
+            "avocado": {"protein": 2.0, "carbs": 8.5, "fat": 14.7, "calories": 160, "category": "fruit"},
+            "almonds": {"protein": 21.2, "carbs": 21.6, "fat": 49.9, "calories": 579, "category": "nuts"},
+            "olive_oil": {"protein": 0.0, "carbs": 0.0, "fat": 100.0, "calories": 884, "category": "oil"},
+            "olive_oil_drizzle": {"protein": 0.0, "carbs": 0.0, "fat": 100.0, "calories": 884, "category": "oil"},
+            
+            # Legumes
+            "beans": {"protein": 21.0, "carbs": 62.4, "fat": 0.9, "calories": 347, "category": "legume"},
+            "lentils": {"protein": 9.0, "carbs": 20.0, "fat": 0.4, "calories": 116, "category": "legume"},
+            "chickpeas": {"protein": 8.9, "carbs": 27.4, "fat": 2.6, "calories": 164, "category": "legume"},
+            
+            # JUNK FOOD / FAST FOOD (realistic values)
+            "pizza": {"protein": 11.0, "carbs": 33.0, "fat": 10.0, "calories": 266, "category": "junk_food"},
+            "cheese_pizza": {"protein": 12.0, "carbs": 33.0, "fat": 11.0, "calories": 276, "category": "junk_food"},
+            "pepperoni_pizza": {"protein": 12.0, "carbs": 30.0, "fat": 13.0, "calories": 298, "category": "junk_food"},
+            "burger": {"protein": 17.0, "carbs": 28.0, "fat": 15.0, "calories": 295, "category": "junk_food"},
+            "hamburger": {"protein": 17.0, "carbs": 28.0, "fat": 15.0, "calories": 295, "category": "junk_food"},
+            "cheeseburger": {"protein": 18.0, "carbs": 28.0, "fat": 18.0, "calories": 327, "category": "junk_food"},
+            "fries": {"protein": 3.4, "carbs": 41.4, "fat": 15.0, "calories": 312, "category": "junk_food"},
+            "french_fries": {"protein": 3.4, "carbs": 41.4, "fat": 15.0, "calories": 312, "category": "junk_food"},
+            "chips": {"protein": 6.6, "carbs": 53.0, "fat": 35.0, "calories": 536, "category": "junk_food"},
+            "potato_chips": {"protein": 6.6, "carbs": 53.0, "fat": 35.0, "calories": 536, "category": "junk_food"},
+            "hot_dog": {"protein": 10.4, "carbs": 2.0, "fat": 26.0, "calories": 290, "category": "junk_food"},
+            "soda": {"protein": 0.0, "carbs": 10.6, "fat": 0.0, "calories": 41, "category": "junk_food"},
+            "cola": {"protein": 0.0, "carbs": 10.6, "fat": 0.0, "calories": 41, "category": "junk_food"},
+            "candy": {"protein": 0.0, "carbs": 75.0, "fat": 5.0, "calories": 400, "category": "junk_food"},
+            "chocolate": {"protein": 4.9, "carbs": 61.0, "fat": 30.0, "calories": 546, "category": "junk_food"},
+            "chocolate_bar": {"protein": 4.9, "carbs": 61.0, "fat": 30.0, "calories": 546, "category": "junk_food"},
+            "ice_cream": {"protein": 3.5, "carbs": 23.0, "fat": 11.0, "calories": 207, "category": "junk_food"},
+            "donut": {"protein": 4.9, "carbs": 51.0, "fat": 25.0, "calories": 452, "category": "junk_food"},
+            "doughnut": {"protein": 4.9, "carbs": 51.0, "fat": 25.0, "calories": 452, "category": "junk_food"},
+            "cake": {"protein": 4.0, "carbs": 58.0, "fat": 15.0, "calories": 387, "category": "junk_food"},
+            "cookie": {"protein": 5.0, "carbs": 68.0, "fat": 20.0, "calories": 480, "category": "junk_food"},
+            "cookies": {"protein": 5.0, "carbs": 68.0, "fat": 20.0, "calories": 480, "category": "junk_food"},
+            "pastry": {"protein": 5.6, "carbs": 45.0, "fat": 20.0, "calories": 384, "category": "junk_food"},
+            "fried_chicken": {"protein": 25.0, "carbs": 10.0, "fat": 18.0, "calories": 290, "category": "junk_food"},
+            "chicken_nuggets": {"protein": 15.0, "carbs": 16.0, "fat": 18.0, "calories": 296, "category": "junk_food"},
+            "nachos": {"protein": 9.0, "carbs": 56.0, "fat": 24.0, "calories": 467, "category": "junk_food"},
+            "taco": {"protein": 12.0, "carbs": 28.0, "fat": 14.0, "calories": 226, "category": "junk_food"},
+            "burrito": {"protein": 12.0, "carbs": 38.0, "fat": 12.0, "calories": 314, "category": "junk_food"},
+            "milkshake": {"protein": 6.0, "carbs": 48.0, "fat": 9.0, "calories": 300, "category": "junk_food"},
+            "energy_drink": {"protein": 0.0, "carbs": 11.0, "fat": 0.0, "calories": 45, "category": "junk_food"},
+            "popcorn": {"protein": 12.6, "carbs": 77.8, "fat": 4.5, "calories": 387, "category": "snack"},
+            "onion_rings": {"protein": 3.8, "carbs": 38.0, "fat": 16.0, "calories": 310, "category": "junk_food"},
+        }
+    
+    def _fuzzy_match_food(self, food_name: str, food_db: Dict) -> Optional[Dict]:
+        """Try to find a match using fuzzy string matching"""
+        # Check for partial matches
+        for db_name, nutrition in food_db.items():
+            # Check if either name contains the other
+            if food_name in db_name or db_name in food_name:
+                logger.info(f"Fuzzy matched '{food_name}' to '{db_name}'")
+                return nutrition
+        return None
+    
+    def _estimate_nutrition(self, food_name: str) -> Dict:
+        """Estimate nutrition based on food name keywords"""
+        # Default estimates based on common food types
+        if any(word in food_name for word in ['chicken', 'turkey', 'fish', 'meat', 'beef', 'pork']):
+            return {"protein": 25.0, "carbs": 0.0, "fat": 8.0, "calories": 180, "category": "protein"}
+        elif any(word in food_name for word in ['vegetable', 'salad', 'greens', 'veggie']):
+            return {"protein": 2.0, "carbs": 5.0, "fat": 0.3, "calories": 30, "category": "vegetable"}
+        elif any(word in food_name for word in ['rice', 'pasta', 'bread', 'grain', 'potato']):
+            return {"protein": 3.0, "carbs": 25.0, "fat": 0.5, "calories": 120, "category": "carb"}
+        elif any(word in food_name for word in ['oil', 'butter', 'fat']):
+            return {"protein": 0.0, "carbs": 0.0, "fat": 100.0, "calories": 884, "category": "fat"}
+        else:
+            # Generic estimate
+            return {"protein": 5.0, "carbs": 15.0, "fat": 3.0, "calories": 100, "category": "unknown"}
     
     def get_recent_meals(self, user_id: int, days: int = 7) -> List[Dict]:
         """Get recent meals for a user"""

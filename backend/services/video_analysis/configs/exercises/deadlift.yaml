@@ -1,0 +1,122 @@
+# Deadlift Exercise Configuration
+# ================================
+# Keypoint configuration for deadlift analysis
+
+exercise:
+  name: deadlift
+  display_name: "Deadlift"
+  description: "Full body compound exercise primarily targeting posterior chain"
+
+# COCO Pose Keypoint indices used
+# 5: left_shoulder, 6: right_shoulder
+# 11: left_hip, 12: right_hip
+# 13: left_knee, 14: right_knee
+# 15: left_ankle, 16: right_ankle
+
+pose_tracking:
+  # Primary angle measurement: shoulder -> hip -> knee
+  primary_keypoints: [5, 11, 13]  # Left side
+  secondary_keypoints: [6, 12, 14]  # Right side
+  
+  # Angle thresholds
+  angles:
+    standing: 170  # Fully extended, lockout position (degrees)
+    bottom: 100    # Bottom position with hip hinge (degrees)
+    knee_bend: 140 # Ideal knee angle at start
+  
+  # Pose type for AIGym (using squat as base - similar hip hinge)
+  pose_type: "squat"
+
+# Key joints to monitor for form analysis
+key_joints:
+  - left_shoulder
+  - right_shoulder
+  - left_hip
+  - right_hip
+  - left_knee
+  - right_knee
+  - left_ankle
+  - right_ankle
+
+# Form rules with specific checks
+form_rules:
+  back_neutral:
+    check: true
+    description: "Spine should remain neutral throughout the lift"
+    feedback: "Maintain a neutral spine throughout the lift - avoid rounding"
+    check_type: "spine_angle"
+    keypoints: [0, 5, 11]  # nose -> shoulder -> hip (approximating spine)
+    reference_angle: 180  # Straight line
+    max_deviation: 20
+    severity: "error"  # Higher severity - injury risk
+  
+  hip_hinge:
+    check: true
+    description: "Movement should initiate from hip hinge"
+    feedback: "Hinge at the hips, pushing them back, not bending at the lower back"
+    check_type: "hip_travel"
+    keypoints: [11, 12]  # Both hips
+    min_backward_travel: 50  # pixels
+    severity: "warning"
+  
+  bar_path:
+    check: true
+    description: "Weight should stay close to body"
+    feedback: "Keep the weight close to your body throughout the movement"
+    check_type: "wrist_proximity"
+    keypoints: [9, 10]  # Both wrists
+    reference: [13, 14]  # Both knees (bar should pass close)
+    max_distance: 100  # pixels from legs
+    severity: "warning"
+  
+  lockout:
+    check: true
+    description: "Full hip extension at the top"
+    feedback: "Fully extend hips at the top - squeeze your glutes"
+    check_type: "max_angle"
+    keypoints: [5, 11, 13]  # shoulder -> hip -> knee
+    target_angle: 170
+    tolerance: 10
+    severity: "info"
+  
+  knee_position:
+    check: true
+    description: "Knees should not cave inward"
+    feedback: "Keep your knees tracking over your toes, not caving in"
+    check_type: "lateral_deviation"
+    keypoints: [13, 14]
+    reference: [15, 16]
+    max_deviation: 25
+    severity: "warning"
+  
+  shoulder_position:
+    check: true
+    description: "Shoulders should be over or slightly in front of the bar"
+    feedback: "Position your shoulders over the bar at the start"
+    check_type: "x_position"
+    keypoints: [5, 6]  # Shoulders
+    reference: [9, 10]  # Wrists (bar position)
+    range: [-20, 50]  # Slightly behind to in front
+    severity: "info"
+
+# Scoring parameters
+scoring:
+  rep_timing:
+    ideal_duration: 4.0  # seconds per rep (slower for control)
+    min_duration: 2.0
+    max_duration: 6.0
+  
+  rom_weight: 0.25
+  posture_weight: 0.4  # Higher weight due to injury risk
+  consistency_weight: 0.15
+  tempo_weight: 0.2
+
+# Common mistakes to detect
+common_mistakes:
+  - "Rounding the lower back"
+  - "Rounding the upper back"
+  - "Knees caving inward"
+  - "Bar drifting away from body"
+  - "Hyperextending at lockout"
+  - "Not achieving full lockout"
+  - "Squatting the weight up instead of hinging"

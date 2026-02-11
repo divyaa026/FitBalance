@@ -1,0 +1,116 @@
+# Bicep Curl Exercise Configuration
+# ==================================
+# Keypoint configuration for bicep curl analysis
+
+exercise:
+  name: bicep_curl
+  display_name: "Bicep Curl"
+  description: "Isolation exercise targeting the biceps brachii"
+
+# COCO Pose Keypoint indices used
+# 5: left_shoulder, 6: right_shoulder
+# 7: left_elbow, 8: right_elbow
+# 9: left_wrist, 10: right_wrist
+# 11: left_hip, 12: right_hip
+
+pose_tracking:
+  # Primary angle measurement: shoulder -> elbow -> wrist
+  primary_keypoints: [5, 7, 9]  # Left arm
+  secondary_keypoints: [6, 8, 10]  # Right arm
+  
+  # Angle thresholds
+  angles:
+    extended: 160  # Arms extended down (degrees)
+    contracted: 40  # Full curl (degrees)
+    optimal_contraction: 35  # Peak contraction
+  
+  # Pose type for AIGym
+  pose_type: "pullup"  # Using pullup for arm flexion tracking
+
+# Key joints to monitor for form analysis
+key_joints:
+  - left_shoulder
+  - right_shoulder
+  - left_elbow
+  - right_elbow
+  - left_wrist
+  - right_wrist
+
+# Form rules with specific checks
+form_rules:
+  elbow_stable:
+    check: true
+    description: "Elbows should remain stationary at sides"
+    feedback: "Keep your elbows pinned to your sides throughout the movement"
+    check_type: "position_stability"
+    keypoints: [7, 8]  # Both elbows
+    max_movement: 30  # pixels from starting position
+    severity: "warning"
+  
+  full_contraction:
+    check: true
+    description: "Achieve full bicep contraction at the top"
+    feedback: "Squeeze and hold at the top for maximum contraction"
+    check_type: "min_angle"
+    keypoints: [5, 7, 9]
+    target_angle: 45
+    tolerance: 10
+    severity: "info"
+  
+  controlled_descent:
+    check: true
+    description: "Lower the weight with control"
+    feedback: "Lower the weight slowly and with control - don't let it drop"
+    check_type: "descent_speed"
+    keypoints: [9, 10]  # Wrists
+    max_velocity: 200  # pixels per second
+    severity: "info"
+  
+  no_swinging:
+    check: true
+    description: "Body should remain stable without swinging"
+    feedback: "Avoid swinging your body for momentum - use strict form"
+    check_type: "body_stability"
+    keypoints: [5, 6, 11, 12]  # Shoulders and hips
+    max_oscillation: 20  # pixels
+    severity: "warning"
+  
+  full_extension:
+    check: true
+    description: "Arms should fully extend at the bottom"
+    feedback: "Fully extend your arms at the bottom of each rep"
+    check_type: "max_angle"
+    keypoints: [5, 7, 9]
+    target_angle: 155
+    tolerance: 10
+    severity: "info"
+  
+  shoulder_elevation:
+    check: true
+    description: "Shoulders should not elevate during curl"
+    feedback: "Keep your shoulders down and relaxed - don't shrug"
+    check_type: "vertical_stability"
+    keypoints: [5, 6]  # Both shoulders
+    max_rise: 25  # pixels
+    severity: "info"
+
+# Scoring parameters
+scoring:
+  rep_timing:
+    ideal_duration: 3.0  # seconds per rep
+    min_duration: 1.5
+    max_duration: 5.0
+  
+  rom_weight: 0.3
+  posture_weight: 0.3
+  consistency_weight: 0.25
+  tempo_weight: 0.15
+
+# Common mistakes to detect
+common_mistakes:
+  - "Swinging momentum from body"
+  - "Elbows drifting forward"
+  - "Partial range of motion"
+  - "Dropping the weight on descent"
+  - "Shoulders shrugging up"
+  - "Using body lean to lift"

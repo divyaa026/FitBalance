@@ -91,8 +91,12 @@ ENABLE_BURNOUT=True
 
 ### 5. Run the Backend
 ```bash
-# Start the FastAPI backend server
-python start_server.py
+# From the root directory
+cd backend
+python main.py
+
+# Or from scripts folder
+python scripts/start_server.py
 ```
 
 The API will be available at `http://localhost:8000`
@@ -186,19 +190,31 @@ GET /burnout/survival-curve/{user_id}
 GET /burnout/recommendations/{user_id}
 ```
 
-## 🏗 Architecture
+## 🏗 Project Structure
 
-### Module Structure
 ```
-backend/
-├── api/
-│   └── main.py              # FastAPI application
-├── modules/
-│   ├── biomechanics.py      # GNN-LSTM biomechanics analysis
-│   ├── nutrition.py         # CNN-GRU food recognition
-│   └── burnout.py          # Cox PH burnout prediction
-├── config.py               # Configuration management
-└── requirements.txt        # Dependencies
+FitBalance/
+├── backend/                # Backend API & services
+│   ├── api/                # FastAPI application
+│   ├── modules/            # Business logic (nutrition, biomechanics, burnout)
+│   ├── database/           # Database models
+│   ├── integrations/       # External API integrations
+│   ├── services/           # Additional services
+│   │   └── video_analysis/ # Video analysis microservice
+│   └── tests/              # Backend tests
+├── frontend/               # Frontend application
+│   ├── src/                # React TypeScript source
+│   └── lib/                # Flutter source (mobile)
+├── ml/                     # Machine learning models
+│   ├── biomechanics/       # GNN-LSTM models
+│   ├── nutrition/          # CNN-GRU models
+│   └── burnout/            # Cox PH models
+├── data/                   # Datasets & training data
+├── docs/                   # Documentation
+│   ├── setup/              # Setup guides
+│   └── development/        # Development docs
+├── scripts/                # Utility scripts
+└── firebase_functions/     # Firebase Cloud Functions
 ```
 
 ### ML Model Architecture
@@ -236,14 +252,15 @@ flake8 backend/
 
 ### Model Training
 ```bash
-# Train biomechanics model
-python scripts/train_biomechanics.py
+# Train all production models
+python scripts/train_all_production_models.py
 
-# Train nutrition model
-python scripts/train_nutrition.py
+# Train individual models
+python ml/biomechanics/train_production_model.py
+python ml/burnout/train_production_model.py
 
-# Train burnout model
-python scripts/train_burnout.py
+# Train nutrition models
+python scripts/train_nutrition_models.py
 ```
 
 ## 📊 Performance Metrics

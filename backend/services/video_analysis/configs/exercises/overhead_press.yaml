@@ -1,0 +1,130 @@
+# Overhead Press Exercise Configuration
+# ======================================
+# Keypoint configuration for overhead press analysis
+
+exercise:
+  name: overhead_press
+  display_name: "Overhead Press"
+  description: "Compound exercise targeting shoulders, triceps, and upper chest"
+
+# COCO Pose Keypoint indices used
+# 5: left_shoulder, 6: right_shoulder
+# 7: left_elbow, 8: right_elbow
+# 9: left_wrist, 10: right_wrist
+# 11: left_hip, 12: right_hip
+# 0: nose (for head position)
+
+pose_tracking:
+  # Primary angle measurement: elbow -> shoulder -> hip
+  primary_keypoints: [7, 5, 11]  # Left side
+  secondary_keypoints: [8, 6, 12]  # Right side
+  
+  # Angle thresholds
+  angles:
+    bottom: 90   # Starting position at shoulders (degrees)
+    top: 170     # Full lockout overhead (degrees)
+    optimal_lockout: 175
+  
+  # Pose type for AIGym
+  pose_type: "pullup"  # Using pullup for vertical arm tracking
+
+# Key joints to monitor for form analysis
+key_joints:
+  - left_shoulder
+  - right_shoulder
+  - left_elbow
+  - right_elbow
+  - left_wrist
+  - right_wrist
+  - left_hip
+  - right_hip
+
+# Form rules with specific checks
+form_rules:
+  core_engaged:
+    check: true
+    description: "Core should be braced to protect lower back"
+    feedback: "Engage your core and squeeze your glutes to protect your lower back"
+    check_type: "hip_stability"
+    keypoints: [11, 12]  # Both hips
+    max_movement: 20  # pixels (minimal hip movement)
+    severity: "warning"
+  
+  full_lockout:
+    check: true
+    description: "Arms should fully extend at the top"
+    feedback: "Fully extend arms at the top with elbows locked"
+    check_type: "max_angle"
+    keypoints: [5, 7, 9]  # shoulder -> elbow -> wrist
+    target_angle: 170
+    tolerance: 10
+    severity: "info"
+  
+  bar_path:
+    check: true
+    description: "Bar should travel in a straight vertical line"
+    feedback: "Press in a straight line overhead - bar should finish over your shoulders"
+    check_type: "vertical_path"
+    keypoints: [9, 10]  # Wrists (bar position)
+    max_horizontal_deviation: 40  # pixels
+    severity: "info"
+  
+  no_lean_back:
+    check: true
+    description: "Minimal backward lean during press"
+    feedback: "Avoid excessive leaning back - stay upright"
+    check_type: "torso_angle"
+    keypoints: [5, 11]  # shoulder to hip
+    reference: "vertical"
+    max_lean: 15  # degrees from vertical
+    severity: "warning"
+  
+  head_position:
+    check: true
+    description: "Move head back then forward around the bar"
+    feedback: "Tuck your chin and move your head back to clear the bar path"
+    check_type: "head_clearance"
+    keypoints: [0]  # Nose
+    reference: [9, 10]  # Wrists
+    severity: "info"
+  
+  elbow_position:
+    check: true
+    description: "Elbows should be slightly in front of the bar"
+    feedback: "Keep your elbows slightly in front of the bar at the start"
+    check_type: "elbow_forward"
+    keypoints: [7, 8]  # Elbows
+    reference: [9, 10]  # Wrists
+    offset: 10  # pixels forward
+    severity: "info"
+  
+  wrist_alignment:
+    check: true
+    description: "Wrists should be stacked over elbows at start"
+    feedback: "Keep your wrists neutral and stacked over your forearms"
+    check_type: "vertical_alignment"
+    keypoints: [7, 9, 8, 10]  # Elbows and wrists
+    max_deviation: 30
+    severity: "info"
+
+# Scoring parameters
+scoring:
+  rep_timing:
+    ideal_duration: 3.5  # seconds per rep
+    min_duration: 2.0
+    max_duration: 5.0
+  
+  rom_weight: 0.25
+  posture_weight: 0.35  # Higher for core stability
+  consistency_weight: 0.2
+  tempo_weight: 0.2
+
+# Common mistakes to detect
+common_mistakes:
+  - "Excessive backward lean"
+  - "Flared elbows"
+  - "Partial lockout"
+  - "Head not clearing bar path"
+  - "Core not engaged - rib flare"
+  - "Pressing in front rather than overhead"
+  - "Losing tension at the bottom"

@@ -9,6 +9,9 @@ import Biomechanics from "./pages/Biomechanics";
 import Nutrition from "./pages/Nutrition";
 import Burnout from "./pages/Burnout";
 import Profile from "./pages/Profile";
+import ProgressiveOverloadArticle from "./pages/ProgressiveOverloadArticle";
+import PostWorkoutNutritionArticle from "./pages/PostWorkoutNutritionArticle";
+import MentalBenefitsArticle from "./pages/MentalBenefitsArticle";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -18,7 +21,7 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <BrowserRouter>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <Routes>
           <Route path="/" element={<Home />} />
           <Route element={<Layout />}>
@@ -26,6 +29,9 @@ const App = () => (
             <Route path="/nutrition" element={<Nutrition />} />
             <Route path="/burnout" element={<Burnout />} />
             <Route path="/profile" element={<Profile />} />
+            <Route path="/articles/progressive-overload" element={<ProgressiveOverloadArticle />} />
+            <Route path="/articles/post-workout-nutrition" element={<PostWorkoutNutritionArticle />} />
+            <Route path="/articles/mental-benefits" element={<MentalBenefitsArticle />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>

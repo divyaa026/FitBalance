@@ -1,0 +1,120 @@
+# Push-up Exercise Configuration
+# ===============================
+# Keypoint configuration for push-up analysis
+
+exercise:
+  name: pushup
+  display_name: "Push-up"
+  description: "Upper body compound exercise targeting chest, shoulders, and triceps"
+
+# COCO Pose Keypoint indices used
+# 5: left_shoulder, 6: right_shoulder
+# 7: left_elbow, 8: right_elbow
+# 9: left_wrist, 10: right_wrist
+# 11: left_hip, 12: right_hip
+# 15: left_ankle, 16: right_ankle
+
+pose_tracking:
+  # Primary angle measurement: shoulder -> elbow -> wrist
+  primary_keypoints: [5, 7, 9]  # Left side
+  secondary_keypoints: [6, 8, 10]  # Right side
+  
+  # Angle thresholds
+  angles:
+    extended: 170  # Arms fully extended (degrees)
+    bent: 90       # Bottom position (degrees)
+    optimal_bottom: 75  # Ideal bottom angle
+  
+  # Pose type for AIGym
+  pose_type: "pushup"
+
+# Key joints to monitor for form analysis
+key_joints:
+  - left_shoulder
+  - right_shoulder
+  - left_elbow
+  - right_elbow
+  - left_wrist
+  - right_wrist
+  - left_hip
+  - right_hip
+
+# Form rules with specific checks
+form_rules:
+  body_alignment:
+    check: true
+    description: "Body should form a straight line from head to heels"
+    feedback: "Keep your body in a straight line from head to heels"
+    check_type: "linearity"
+    keypoints: [5, 11, 15]  # shoulder -> hip -> ankle
+    max_deviation: 30  # pixels from straight line
+    severity: "warning"
+  
+  elbow_position:
+    check: true
+    description: "Elbows should be at 45 degrees to body"
+    feedback: "Keep elbows at 45 degrees to your body, not flared out"
+    check_type: "elbow_angle"
+    keypoints: [5, 7, 11]  # shoulder -> elbow -> hip (looking from above)
+    min_angle: 30
+    max_angle: 60
+    severity: "warning"
+  
+  full_extension:
+    check: true
+    description: "Arms should fully extend at the top"
+    feedback: "Fully extend arms at the top of each rep"
+    check_type: "max_angle"
+    keypoints: [5, 7, 9]
+    target_angle: 165
+    tolerance: 10
+    severity: "info"
+  
+  chest_depth:
+    check: true
+    description: "Chest should come close to the ground"
+    feedback: "Lower your chest close to the ground for full range of motion"
+    check_type: "min_distance"
+    keypoints: [5, 6]  # shoulders (proxy for chest)
+    ground_reference: true
+    min_distance_ratio: 0.15  # Relative to starting height
+    severity: "info"
+  
+  hip_sag:
+    check: true
+    description: "Hips should not sag below the shoulder-ankle line"
+    feedback: "Engage your core to prevent hip sagging"
+    check_type: "below_line"
+    keypoints: [5, 11, 15]  # Check if hip drops below shoulder-ankle line
+    threshold: 20  # pixels
+    severity: "warning"
+  
+  hip_pike:
+    check: true
+    description: "Hips should not pike up"
+    feedback: "Lower your hips - your back should not form an inverted V"
+    check_type: "above_line"
+    keypoints: [5, 11, 15]
+    threshold: 30  # pixels
+    severity: "warning"
+
+# Scoring parameters
+scoring:
+  rep_timing:
+    ideal_duration: 2.5  # seconds per rep
+    min_duration: 1.0
+    max_duration: 4.0
+  
+  rom_weight: 0.25
+  posture_weight: 0.4  # Higher weight for body alignment
+  consistency_weight: 0.2
+  tempo_weight: 0.15
+
+# Common mistakes to detect
+common_mistakes:
+  - "Hip sagging (weak core)"
+  - "Hip piking (too easy variation)"
+  - "Elbows flaring out to 90 degrees"
+  - "Partial range of motion"
+  - "Neck craning forward"
+  - "Hands too wide or too narrow"

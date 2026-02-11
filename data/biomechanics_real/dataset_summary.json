@@ -1,0 +1,31 @@
+{
+  "total_videos": 0,
+  "exercises": [],
+  "datasets": [
+    {
+      "Dataset": "Fitness-AQA Dataset",
+      "Status": " Pending",
+      "Videos": 500,
+      "Exercises": "squat, pushup"
+    },
+    {
+      "Dataset": "Countix Repetition Counting Dataset",
+      "Status": " Pending",
+      "Videos": 390,
+      "Exercises": "squat, pushup, pullup, situp"
+    },
+    {
+      "Dataset": "RepNet Dataset",
+      "Status": " Pending",
+      "Videos": 250,
+      "Exercises": "squat, bench_press, deadlift"
+    },
+    {
+      "Dataset": "Home Workout Dataset",
+      "Status": " Pending",
+      "Videos": 300,
+      "Exercises": "squat, lunge, pushup, plank"
+    }
+  ],
+  "download_date": "2025-10-27T19:49:25.130755"
+}

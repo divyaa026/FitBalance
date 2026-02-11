@@ -1,9 +1,5 @@
-import { useState, useRef, useCallback, useEffect } from "react";
-<<<<<<< HEAD
-import { Video, Upload, TrendingUp, AlertCircle, Camera, Square, Play, StopCircle, Lightbulb, Activity, CheckCircle } from "lucide-react";
-=======
-import { Video, Upload, TrendingUp, AlertCircle, Camera, Square, Play, StopCircle, Activity } from "lucide-react";
->>>>>>> 633c84e602780eab5038f97c9beaa390e270d288
+import { useState, useRef } from "react";
+import { Video, Upload, TrendingUp, AlertCircle, Camera, Lightbulb, Activity, CheckCircle, AlertTriangle, XCircle, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -11,14 +7,10 @@ import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useBiomechanics } from "@/hooks/use-fitbalance";
 import { useToast } from "@/hooks/use-toast";
-import SimpleCameraTest from "@/components/SimpleCameraTest";
-<<<<<<< HEAD
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { TorqueHeatmap } from '@/components/TorqueHeatmap';
-=======
-import TorqueHeatmap from '@/components/TorqueHeatmap';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
->>>>>>> 633c84e602780eab5038f97c9beaa390e270d288
+import { BodyStressMap } from '@/components/BodyStressMap';
+import { Badge } from "@/components/ui/badge";
 
 const exercises = [
   "Squat",
@@ -31,227 +23,16 @@ const exercises = [
 
 export default function Biomechanics() {
   const [selectedExercise, setSelectedExercise] = useState<string>("");
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordedVideoUrl, setRecordedVideoUrl] = useState<string | null>(null);
-  const [cameraPermission, setCameraPermission] = useState<'granted' | 'denied' | 'prompt'>('prompt');
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const [videoError, setVideoError] = useState<string | null>(null);
+  const [uploadedVideoUrl, setUploadedVideoUrl] = useState<string | null>(null);
+  const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
+  const [exerciseDetectionError, setExerciseDetectionError] = useState<string | null>(null);
 
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const recordedChunks = useRef<Blob[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   const { isLoading: isAnalyzing, error, analysis, analyzeMovement } = useBiomechanics();
   const { toast } = useToast();
 
-  // Initialize camera when component mounts
-  useEffect(() => {
-    checkCameraPermission();
-    return () => {
-      // Cleanup camera stream when component unmounts
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
-    };
-  }, [stream]); // Add stream dependency to cleanup properly
-
-  // Separate effect to handle video element updates
-  useEffect(() => {
-    if (stream && videoRef.current) {
-      console.log('Effect: Setting up video element with stream');
-      const video = videoRef.current;
-
-      // Reset video element completely
-      video.srcObject = null;
-      video.load();
-
-      // Set new source
-      video.srcObject = stream;
-
-      const handleLoadedMetadata = () => {
-        console.log('Effect: Video metadata loaded', {
-          width: video.videoWidth,
-          height: video.videoHeight,
-          readyState: video.readyState
-        });
-
-        // Ensure video plays
-        video.play().catch(err => {
-          console.error('Effect: Play failed:', err);
-        });
-      };
-
-      const handleCanPlay = () => {
-        console.log('Effect: Video can play');
-        if (video.paused) {
-          video.play().catch(console.error);
-        }
-      };
-
-      video.addEventListener('loadedmetadata', handleLoadedMetadata);
-      video.addEventListener('canplay', handleCanPlay);
-
-      // Cleanup function
-      return () => {
-        video.removeEventListener('loadedmetadata', handleLoadedMetadata);
-        video.removeEventListener('canplay', handleCanPlay);
-      };
-    }
-  }, [stream]);
-
-  const checkCameraPermission = async () => {
-    try {
-      const result = await navigator.permissions.query({ name: 'camera' as PermissionName });
-      setCameraPermission(result.state);
-    } catch (err) {
-      console.warn('Permission API not supported, will try direct access');
-    }
-  };
-
-  const startCamera = async () => {
-    try {
-      console.log('Requesting camera access...');
-      setVideoError(null);
-
-      // Start with the simplest possible constraints
-      let mediaStream;
-
-      try {
-        // Try simple constraints first
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: false
-        });
-        console.log('Simple constraints worked!');
-      } catch (simpleError) {
-        console.log('Simple constraints failed, trying with specific settings...');
-        // If simple fails, try with more specific constraints
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { min: 320, ideal: 640, max: 1280 },
-            height: { min: 240, ideal: 480, max: 720 },
-            frameRate: { ideal: 30, max: 60 }
-          },
-          audio: false
-        });
-      }
-
-      console.log('Camera stream obtained!');
-      console.log('Stream details:', {
-        id: mediaStream.id,
-        active: mediaStream.active,
-        videoTracks: mediaStream.getVideoTracks().length
-      });
-
-      if (mediaStream.getVideoTracks().length === 0) {
-        throw new Error('No video tracks available');
-      }
-
-      const videoTrack = mediaStream.getVideoTracks()[0];
-      console.log('Video track settings:', videoTrack.getSettings());
-      console.log('Video track state:', videoTrack.readyState);
-
-      setStream(mediaStream);
-      setVideoError(null);
-      setCameraPermission('granted');
-
-      // Don't set srcObject here - let the useEffect handle it
-
-      toast({
-        title: "Camera Access Granted",
-        description: "Camera is ready for recording.",
-      });
-    } catch (err) {
-      console.error('Error accessing camera:', err);
-      setCameraPermission('denied');
-      setVideoError(`Camera error: ${err.message}`);
-      toast({
-        title: "Camera Access Denied",
-        description: `Please allow camera access. Error: ${err.message}`,
-        variant: "destructive",
-      });
-    }
-  };
-
-  const stopCamera = () => {
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-      setStream(null);
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-  };
-
-  const startRecording = useCallback(() => {
-    if (!stream || !selectedExercise) return;
-
-    recordedChunks.current = [];
-
-    const mediaRecorder = new MediaRecorder(stream, {
-      mimeType: 'video/webm;codecs=vp8'
-    });
-
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        recordedChunks.current.push(event.data);
-      }
-    };
-
-    mediaRecorder.onstop = () => {
-      const blob = new Blob(recordedChunks.current, { type: 'video/webm' });
-      const url = URL.createObjectURL(blob);
-      setRecordedVideoUrl(url);
-
-      // Auto-analyze the recorded video
-      analyzeRecordedVideo(blob);
-    };
-
-    mediaRecorderRef.current = mediaRecorder;
-    mediaRecorder.start();
-    setIsRecording(true);
-
-    toast({
-      title: "Recording Started",
-      description: "Recording your exercise. Click stop when finished.",
-    });
-  }, [stream, selectedExercise]);
-
-  const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-
-      toast({
-        title: "Recording Stopped",
-        description: "Processing your video for analysis...",
-      });
-    }
-  }, [isRecording]);
-
-  const analyzeRecordedVideo = async (videoBlob: Blob) => {
-    try {
-      const file = new File([videoBlob], `exercise-${selectedExercise}-${Date.now()}.webm`, {
-        type: 'video/webm'
-      });
-
-      await analyzeMovement(file, selectedExercise, 'user123');
-
-      toast({
-        title: "Analysis Complete",
-        description: "Your exercise has been analyzed successfully!",
-      });
-    } catch (err) {
-      console.error('Analysis failed:', err);
-      toast({
-        title: "Analysis Failed",
-        description: "Unable to analyze the video. Please try again.",
-        variant: "destructive",
-      });
-    }
-  };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     console.log('File upload triggered!', event);
@@ -287,6 +68,12 @@ export default function Biomechanics() {
 
     console.log('Starting upload process for file:', file.name, file.type, file.size);
 
+    // Create URL for video preview
+    const videoUrl = URL.createObjectURL(file);
+    setUploadedVideoUrl(videoUrl);
+    setUploadedImageUrl(null);  // Clear any uploaded image
+    setExerciseDetectionError(null);  // Clear previous errors
+
     try {
       toast({
         title: "Uploading Video",
@@ -297,10 +84,21 @@ export default function Biomechanics() {
       const result = await analyzeMovement(file, selectedExercise, 'user123');
       console.log('Analysis result:', result);
 
-      toast({
-        title: "Upload Successful",
-        description: "Your video has been analyzed successfully!",
-      });
+      // Check if exercise was detected
+      if (result && !result.is_valid_exercise) {
+        setExerciseDetectionError(result.error_message || "No exercise detected in the video.");
+        toast({
+          title: "No Exercise Detected",
+          description: result.error_message || "Please upload a video showing a person performing an exercise.",
+          variant: "destructive",
+        });
+      } else {
+        setExerciseDetectionError(null);
+        toast({
+          title: "Upload Successful",
+          description: "Your video has been analyzed successfully!",
+        });
+      }
     } catch (err) {
       console.error('Upload error:', err);
       toast({
@@ -339,25 +137,44 @@ export default function Biomechanics() {
       return;
     }
 
+    console.log('Starting photo upload for:', file.name, file.type, file.size);
+
+    // Create URL for image preview
+    const imageUrl = URL.createObjectURL(file);
+    setUploadedImageUrl(imageUrl);
+    setUploadedVideoUrl(null);  // Clear any uploaded video
+    setExerciseDetectionError(null);  // Clear previous errors
+
     try {
       toast({
         title: "Uploading Photo",
         description: "Your photo is being analyzed...",
       });
 
-      // For now, we'll treat photos similar to videos for analysis
-      // In a real implementation, you might have a separate endpoint for photos
-      await analyzeMovement(file, selectedExercise, 'user123');
+      const result = await analyzeMovement(file, selectedExercise, 'user123');
+      console.log('Photo analysis result:', result);
 
-      toast({
-        title: "Upload Successful",
-        description: "Your photo has been analyzed successfully!",
-      });
+      // Check if exercise was detected
+      if (result && !result.is_valid_exercise) {
+        setExerciseDetectionError(result.error_message || "No exercise form detected in the image.");
+        toast({
+          title: "No Exercise Form Detected",
+          description: result.error_message || "Please upload an image showing your exercise form.",
+          variant: "destructive",
+        });
+      } else {
+        setExerciseDetectionError(null);
+        toast({
+          title: "Upload Successful",
+          description: "Your photo has been analyzed successfully!",
+        });
+      }
     } catch (err) {
       console.error('Photo upload error:', err);
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
       toast({
         title: "Upload Failed",
-        description: "Unable to analyze the uploaded photo. Please try again.",
+        description: `Unable to analyze the uploaded photo: ${errorMsg}`,
         variant: "destructive",
       });
     }
@@ -395,16 +212,16 @@ export default function Biomechanics() {
           </div>
           <h1 className="text-4xl font-bold mb-2">Movement Coaching</h1>
           <p className="text-muted-foreground">
-            Record your exercises for real-time form analysis and personalized coaching
+            Upload your exercise videos for AI-powered form analysis and personalized coaching
           </p>
         </div>
 
         {/* Video Capture Section */}
         <Card className="glass-card mb-6 animate-slide-up">
           <CardHeader>
-            <CardTitle>Record Exercise</CardTitle>
+            <CardTitle>Analyze Exercise</CardTitle>
             <CardDescription>
-              Select your exercise type and record a video for analysis
+              Select your exercise type and upload a video or photo for analysis
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -421,12 +238,12 @@ export default function Biomechanics() {
               </SelectContent>
             </Select>
 
-            {/* Camera Permission Alert */}
-            {cameraPermission === 'denied' && (
-              <Alert className="mb-4">
+            {/* Exercise Detection Error Alert */}
+            {exerciseDetectionError && (
+              <Alert variant="destructive" className="mb-4">
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>
-                  Camera access is required to record videos. Please enable camera permissions in your browser settings.
+                  <strong>No Exercise Detected:</strong> {exerciseDetectionError}
                 </AlertDescription>
               </Alert>
             )}
@@ -438,178 +255,90 @@ export default function Biomechanics() {
               </Alert>
             )}
 
-            {videoError && (
-              <Alert variant="destructive" className="mb-4">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>{videoError}</AlertDescription>
-              </Alert>
-            )}
-
             <div className="aspect-video bg-gray-200 rounded-lg overflow-hidden border-2 border-dashed border-border relative">
-              {stream ? (
-                <>
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    muted
-                    playsInline
-                    controls={false}
-                    className="w-full h-full"
-                    style={{
-                      objectFit: 'cover',
-                      backgroundColor: '#000000',
-                      display: 'block',
-                      transform: 'scaleX(-1)' // Mirror for better UX
-                    }}
-                    onLoadedMetadata={(e) => {
-                      const video = e.target as HTMLVideoElement;
-                      console.log('Video loaded metadata:', {
-                        videoWidth: video.videoWidth,
-                        videoHeight: video.videoHeight,
-                        duration: video.duration,
-                        readyState: video.readyState
-                      });
-                    }}
-                    onCanPlay={(e) => {
-                      const video = e.target as HTMLVideoElement;
-                      console.log('Video can play');
-                      if (video.paused) {
-                        video.play().catch(e => console.error('Play failed:', e));
-                      }
-                    }}
-                    onPlay={() => console.log('Video is playing - should be visible!')}
-                    onError={(e) => {
-                      console.error('Video error:', e);
-                      setVideoError('Video playback error');
-                    }}
-                    onLoadedData={() => console.log('Video data loaded')}
-                    onTimeUpdate={() => {
-                      // This fires when video is actually playing
-                      // console.log('Video time update - video is definitely playing');
-                    }}
-                  />
-                  {/* Debug info overlay - more detailed */}
-                  <div className="absolute bottom-2 left-2 bg-black/80 text-white text-xs px-2 py-1 rounded max-w-xs">
-                    <div>Stream: {stream ? 'Active' : 'None'}</div>
-                    <div>Tracks: {stream?.getVideoTracks().length || 0}</div>
-                    <div>State: {stream?.getVideoTracks()[0]?.readyState || 'N/A'}</div>
-                    <div>Video: {videoRef.current?.videoWidth || 0}x{videoRef.current?.videoHeight || 0}</div>
-                    <div>Playing: {videoRef.current?.paused === false ? 'Yes' : 'No'}</div>
-                  </div>
-                </>
-              ) : recordedVideoUrl ? (
+              {uploadedImageUrl ? (
+                <img
+                  src={uploadedImageUrl}
+                  alt="Uploaded exercise form"
+                  className="w-full h-full object-contain bg-black"
+                />
+              ) : uploadedVideoUrl ? (
                 <video
-                  src={recordedVideoUrl}
+                  src={uploadedVideoUrl}
                   controls
-                  className="w-full h-full object-cover"
+                  autoPlay
+                  loop
+                  className="w-full h-full object-contain bg-black"
                 />
               ) : (
                 <div className="flex items-center justify-center h-full">
                   <div className="text-center">
-                    <Camera className="h-16 w-16 mx-auto mb-4 text-muted-foreground" />
+                    <Video className="h-16 w-16 mx-auto mb-4 text-muted-foreground" />
                     <p className="text-muted-foreground mb-4">
-                      {cameraPermission === 'granted'
-                        ? 'Camera ready - Select an exercise to start recording'
-                        : 'Click "Start Camera" to begin'
-                      }
+                      Upload a video or photo to analyze your exercise form
                     </p>
                   </div>
-                </div>
-              )}
-
-              {/* Recording indicator */}
-              {isRecording && (
-                <div className="absolute top-4 left-4 flex items-center gap-2 bg-red-500 text-white px-3 py-1 rounded-full text-sm font-medium">
-                  <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
-                  Recording
                 </div>
               )}
             </div>
 
             <div className="flex gap-4 flex-wrap">
-              {!stream ? (
-                <Button
-                  onClick={startCamera}
-                  className="flex-1 gradient-biomechanics text-white font-medium"
-                  disabled={isAnalyzing}
-                >
-                  <Camera className="mr-2 h-4 w-4" />
-                  Start Camera
-                </Button>
-              ) : !isRecording ? (
-                <>
-                  <Button
-                    onClick={startRecording}
-                    className="flex-1 gradient-biomechanics text-white font-medium"
-                    disabled={!selectedExercise || isAnalyzing}
-                  >
-                    <Video className="mr-2 h-4 w-4" />
-                    Start Recording
-                  </Button>
-                  <Button
-                    onClick={stopCamera}
-                    variant="outline"
-                    className="flex-1 border-red-500 text-red-500 hover:bg-red-500 hover:text-white font-medium"
-                  >
-                    <Square className="mr-2 h-4 w-4" />
-                    Stop Camera
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  onClick={stopRecording}
-                  variant="destructive"
-                  className="flex-1 bg-red-600 hover:bg-red-700 text-white font-medium"
-                >
-                  <StopCircle className="mr-2 h-4 w-4" />
-                  Stop Recording
-                </Button>
-              )}
-
-              {/* Simplified Upload Video Button */}
+              {/* Upload Video Button */}
               <div className="flex-1">
                 <input
                   id="video-upload"
+                  ref={fileInputRef}
                   type="file"
                   accept="video/*"
                   onChange={handleFileUpload}
-                  style={{ display: 'none' }}
+                  style={{ position: 'absolute', left: '-9999px', width: '1px', height: '1px', overflow: 'hidden' }}
                 />
-                <Button
-                  variant="outline"
-                  className="w-full border-blue-500 text-blue-600 hover:bg-blue-500 hover:text-white font-medium"
-                  disabled={!selectedExercise || isAnalyzing}
-                  onClick={() => {
-                    const input = document.getElementById('video-upload') as HTMLInputElement;
-                    if (input) input.click();
-                  }}
-                >
-                  <Upload className="mr-2 h-4 w-4" />
-                  Upload Video
-                </Button>
+                {(!selectedExercise || isAnalyzing) ? (
+                  <Button
+                    variant="outline"
+                    className="w-full border-blue-500 text-blue-600 hover:bg-blue-500 hover:text-white font-medium"
+                    disabled
+                  >
+                    <Upload className="mr-2 h-4 w-4" />
+                    Upload Video
+                  </Button>
+                ) : (
+                  <label htmlFor="video-upload" className="w-full block">
+                    <div className="inline-block w-full text-center border border-blue-500 text-blue-600 hover:bg-blue-500 hover:text-white font-medium px-4 py-2 rounded-md cursor-pointer">
+                      <Upload className="mr-2 h-4 w-4 inline-block align-middle" />
+                      <span className="align-middle">Upload Video</span>
+                    </div>
+                  </label>
+                )}
               </div>
 
-              {/* Simplified Upload Photo Button */}
+              {/* Upload Photo Button */}
               <div className="flex-1">
                 <input
                   id="photo-upload"
+                  ref={photoInputRef}
                   type="file"
                   accept="image/*"
                   onChange={handlePhotoUpload}
-                  style={{ display: 'none' }}
+                  style={{ position: 'absolute', left: '-9999px', width: '1px', height: '1px', overflow: 'hidden' }}
                 />
-                <Button
-                  variant="outline"
-                  className="w-full border-green-500 text-green-600 hover:bg-green-500 hover:text-white font-medium"
-                  disabled={!selectedExercise || isAnalyzing}
-                  onClick={() => {
-                    const input = document.getElementById('photo-upload') as HTMLInputElement;
-                    if (input) input.click();
-                  }}
-                >
-                  <Camera className="mr-2 h-4 w-4" />
-                  Upload Photo
-                </Button>
+                {(!selectedExercise || isAnalyzing) ? (
+                  <Button
+                    variant="outline"
+                    className="w-full border-green-500 text-green-600 hover:bg-green-500 hover:text-white font-medium"
+                    disabled
+                  >
+                    <Camera className="mr-2 h-4 w-4" />
+                    Upload Photo
+                  </Button>
+                ) : (
+                  <label htmlFor="photo-upload" className="w-full block">
+                    <div className="inline-block w-full text-center border border-green-500 text-green-600 hover:bg-green-500 hover:text-white font-medium px-4 py-2 rounded-md cursor-pointer">
+                      <Camera className="mr-2 h-4 w-4 inline-block align-middle" />
+                      <span className="align-middle">Upload Photo</span>
+                    </div>
+                  </label>
+                )}
               </div>
             </div>
 
@@ -627,7 +356,7 @@ export default function Biomechanics() {
 
         {analysis && (
   <>
-    <Card className="glass-card mt-6 animate-slide-up">
+    <Card className="glass-card mt-8 animate-slide-up">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <TrendingUp className="h-5 w-5 text-primary" />
@@ -662,25 +391,32 @@ export default function Biomechanics() {
           </p>
         </div>
         {/* Joint Angles */}
-        {analysis.joint_angles && (
+        {analysis?.joint_angles?.length > 0 && (
           <div className="space-y-3">
             <h4 className="font-semibold text-sm">Joint Angles</h4>
-            {Object.entries(analysis.joint_angles).map(([joint, angle]) => (
-              <div key={joint} className="space-y-1">
-                <div className="flex justify-between text-sm">
-                  <span className="capitalize">{joint.replace('_', ' ')}</span>
-                  <span className="font-medium">{Math.round(angle as number)}°</span>
+            {analysis.joint_angles.map((ja) => {
+              const joint = (ja as any).joint_name ?? 'joint';
+              const angleVal = (ja as any).angle ?? 0;
+              const angleNum = typeof angleVal === 'number' ? angleVal : Number(angleVal);
+              const displayAngle = Number.isFinite(angleNum) ? Math.round(angleNum) : '--';
+              const progressValue = Number.isFinite(angleNum) ? (angleNum / 180) * 100 : 0;
+              return (
+                <div key={joint} className="space-y-1">
+                  <div className="flex justify-between text-sm">
+                    <span className="capitalize">{String(joint).replace('_', ' ')}</span>
+                    <span className="font-medium">{displayAngle}°</span>
+                  </div>
+                  <Progress value={progressValue} className="h-2" />
                 </div>
-                <Progress value={((angle as number) / 180) * 100} className="h-2" />
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </CardContent>
     </Card>
-    {/* Risk Factors */}
-    {analysis.risk_factors && analysis.risk_factors.length > 0 && (
-      <Card className="glass-card mt-6 animate-slide-up border-orange-500/50">
+    {/* Risk Factors (derived from torque analysis) */}
+    {analysis?.torques?.some(t => t.risk_level && t.risk_level !== 'low') && (
+      <Card className="glass-card mt-8 animate-slide-up border-orange-500/50">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-orange-600">
             <AlertCircle className="h-5 w-5" />
@@ -689,11 +425,11 @@ export default function Biomechanics() {
         </CardHeader>
         <CardContent>
           <div className="space-y-2">
-            {analysis.risk_factors.map((risk, index) => (
+            {analysis?.torques?.filter(t => t.risk_level && t.risk_level !== 'low').map((t, index) => (
               <Alert key={index} variant="destructive" className="bg-orange-50 border-orange-200">
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>
-                  {risk.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                  {`${t.joint_name.replace(/_/g, ' ')} - ${String(t.risk_level).toUpperCase()}`}
                 </AlertDescription>
               </Alert>
             ))}
@@ -701,9 +437,85 @@ export default function Biomechanics() {
         </CardContent>
       </Card>
     )}
+    
+    {/* Form Errors - Specific incorrect positions */}
+    {analysis?.form_errors && analysis.form_errors.length > 0 && (
+      <Card className="glass-card mt-8 animate-slide-up border-red-500/50">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-red-600">
+            <XCircle className="h-5 w-5" />
+            Form Corrections Needed
+          </CardTitle>
+          <CardDescription>
+            Specific areas where your form needs improvement
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {analysis.form_errors.map((error, index) => (
+              <div 
+                key={index} 
+                className={`p-4 rounded-lg border-l-4 ${
+                  error.severity === 'severe' ? 'bg-red-100 border-red-600' :
+                  error.severity === 'moderate' ? 'bg-orange-100 border-orange-600' :
+                  'bg-yellow-100 border-yellow-600'
+                }`}
+              >
+                <div className="flex items-start justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    {error.severity === 'severe' ? (
+                      <XCircle className="h-5 w-5 text-red-600" />
+                    ) : error.severity === 'moderate' ? (
+                      <AlertTriangle className="h-5 w-5 text-orange-600" />
+                    ) : (
+                      <AlertCircle className="h-5 w-5 text-yellow-600" />
+                    )}
+                    <span className={`font-semibold ${
+                      error.severity === 'severe' ? 'text-red-900' :
+                      error.severity === 'moderate' ? 'text-orange-900' :
+                      'text-yellow-900'
+                    }`}>{error.body_part}</span>
+                  </div>
+                  <Badge 
+                    variant={error.severity === 'severe' ? 'destructive' : 'secondary'}
+                    className={
+                      error.severity === 'severe' ? 'bg-red-600 text-white' :
+                      error.severity === 'moderate' ? 'bg-orange-600 text-white' :
+                      'bg-yellow-600 text-black'
+                    }
+                  >
+                    {error.severity.toUpperCase()}
+                  </Badge>
+                </div>
+                <p className={`text-sm font-medium mb-1 ${
+                  error.severity === 'severe' ? 'text-red-800' :
+                  error.severity === 'moderate' ? 'text-orange-800' :
+                  'text-yellow-800'
+                }`}>{error.issue}</p>
+                <p className={`text-xs mb-2 ${
+                  error.severity === 'severe' ? 'text-red-700' :
+                  error.severity === 'moderate' ? 'text-orange-700' :
+                  'text-yellow-700'
+                }`}>
+                  Current: {error.current_value.toFixed(1)}° | Expected: {error.expected_range[0]}° - {error.expected_range[1]}°
+                </p>
+                <div className={`p-2 rounded text-sm ${
+                  error.severity === 'severe' ? 'bg-red-200 text-red-900' :
+                  error.severity === 'moderate' ? 'bg-orange-200 text-orange-900' :
+                  'bg-yellow-200 text-yellow-900'
+                }`}>
+                  <span className="font-medium">💡 Fix: </span>{error.correction_tip}
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    )}
+    
     {/* Recommendations */}
     {analysis.recommendations && analysis.recommendations.length > 0 && (
-      <Card className="glass-card mt-6 animate-slide-up">
+      <Card className="glass-card mt-8 animate-slide-up">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Lightbulb className="h-5 w-5 text-yellow-500" />
@@ -722,39 +534,20 @@ export default function Biomechanics() {
         </CardContent>
       </Card>
     )}
-    {/* Torque Heatmaps: Only show if heatmap_data present */}
-    {analysis.heatmap_data && (
-      <Card className="glass-card mt-6 animate-slide-up">
+  {/* Body Stress Map: Visual representation of joint stress */}
+  {(analysis as any)?.heatmap_data && (
+        <Card className="glass-card mt-8 animate-slide-up">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Activity className="h-5 w-5 text-primary" />
-            Torque Heatmap Analysis
+            Joint Stress Analysis
           </CardTitle>
           <CardDescription>
-            Visual representation of joint stress during movement
+            Visual representation of stress on your joints during the exercise. Click on a joint to see details.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="knee" className="w-full">
-            <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="knee">Knee</TabsTrigger>
-              <TabsTrigger value="hip">Hip</TabsTrigger>
-              <TabsTrigger value="ankle">Ankle</TabsTrigger>
-              <TabsTrigger value="back">Back</TabsTrigger>
-            </TabsList>
-            <TabsContent value="knee" className="mt-4">
-              <TorqueHeatmap data={analysis.heatmap_data} jointName="knee" />
-            </TabsContent>
-            <TabsContent value="hip" className="mt-4">
-              <TorqueHeatmap data={analysis.heatmap_data} jointName="hip" />
-            </TabsContent>
-            <TabsContent value="ankle" className="mt-4">
-              <TorqueHeatmap data={analysis.heatmap_data} jointName="ankle" />
-            </TabsContent>
-            <TabsContent value="back" className="mt-4">
-              <TorqueHeatmap data={analysis.heatmap_data} jointName="back" />
-            </TabsContent>
-          </Tabs>
+          <BodyStressMap data={(analysis as any).heatmap_data} formScore={analysis?.form_score} />
         </CardContent>
       </Card>
     )}
@@ -762,7 +555,7 @@ export default function Biomechanics() {
 )}
 
         {/* Analysis Results Placeholder */}
-        <div className="grid md:grid-cols-2 gap-6 animate-slide-up">
+        <div className="grid md:grid-cols-2 gap-6 mt-10 animate-slide-up">
           <Card className="glass-card">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -809,7 +602,7 @@ export default function Biomechanics() {
         </div>
 
         {/* Recommendations Placeholder */}
-        <Card className="glass-card mt-6 animate-slide-up">
+        <Card className="glass-card mt-8 animate-slide-up">
           <CardHeader>
             <CardTitle>AI Coaching Recommendations</CardTitle>
             <CardDescription>
@@ -835,11 +628,6 @@ export default function Biomechanics() {
             )}
           </CardContent>
         </Card>
-
-        {/* Simple Camera Test for debugging */}
-        <div className="mt-6">
-          <SimpleCameraTest />
-        </div>
       </div>
     </div>
   );

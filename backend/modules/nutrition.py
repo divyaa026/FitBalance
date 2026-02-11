@@ -28,7 +28,8 @@ from datetime import datetime
 
 # Optional Gemini import - fallback gracefully if not available
 try:
-    import google.generativeai as genai
+    # Updated to use the new google.genai package
+    import google.genai as genai
     GEMINI_AVAILABLE = True
 except ImportError:
     genai = None
@@ -38,7 +39,7 @@ import base64
 import io
 
 # Import database module
-from backend.database.nutrition_db import nutrition_db
+from database.nutrition_db import nutrition_db
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,9 @@ class FoodItem:
     calories: float
     serving_size: str
     bounding_box: Tuple[int, int, int, int]  # x, y, width, height
+    carbs: float = 0.0  # grams
+    fat: float = 0.0  # grams
+    fiber: float = 0.0  # grams
 
 @dataclass
 class MealAnalysis:
@@ -238,11 +242,14 @@ class ProteinOptimizer:
     async def analyze_meal(self, meal_photo: UploadFile, user_id: str, dietary_restrictions: List[str]) -> MealAnalysis:
         """Analyze meal photo for protein content and optimization"""
         try:
-            # Save image temporarily
+            # Save and preprocess image
             with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_file:
                 content = await meal_photo.read()
-                tmp_file.write(content)
-                image_path = tmp_file.name
+                
+                # Preprocess image for optimal Gemini recognition
+                image_path = self._preprocess_uploaded_image(content, tmp_file.name)
+            
+            logger.info(f"Image preprocessed and saved to: {image_path}")
             
             # First, validate if the image contains food
             is_food, validation_reason = self._is_food_image(image_path)
@@ -304,37 +311,57 @@ class ProteinOptimizer:
                 logger.info("Using Gemini Vision API for food detection")
                 detected_foods = self._detect_foods_with_gemini(image_path)
                 if detected_foods:  # If Gemini returns results, use them
+                    logger.info(f"Gemini successfully detected {len(detected_foods)} foods")
                     return detected_foods
                 else:
-                    logger.info("Gemini didn't return results, falling back to CNN-GRU")
+                    logger.warning("Gemini returned empty results, falling back to mock detection")
+            else:
+                logger.info("Gemini disabled, using mock detection")
             
-            # Fallback to CNN-GRU model
-            logger.info("Using CNN-GRU model for food detection")
+            # Fallback to mock detection with realistic nutrition values
+            logger.info("Using mock food detection with database lookup")
+            detected_foods = self._mock_food_detection(image_path)
             
-            # Load and preprocess image
-            image = Image.open(image_path)
-            image = image.resize((224, 224))  # Standard size for CNN
-            image_tensor = self._preprocess_image(image)
+            # Ensure all foods have nutrition data from database
+            for food in detected_foods:
+                if food.protein_content == 0 or food.calories == 0:
+                    logger.warning(f"Food {food.name} has zero nutrition, looking up in database...")
+                    nutrition = nutrition_db.get_food_nutrition(food.name)
+                    if nutrition:
+                        # Calculate based on serving size
+                        serving_g = 100  # default
+                        if food.serving_size and 'g' in food.serving_size:
+                            try:
+                                serving_g = int(food.serving_size.replace('g', ''))
+                            except:
+                                pass
+                        
+                        food.protein_content = round((nutrition['protein'] * serving_g) / 100, 1)
+                        food.calories = int((nutrition['calories'] * serving_g) / 100)
+                        logger.info(f"Updated {food.name}: {food.protein_content}g protein, {food.calories} cal")
             
-            # Model inference
-            with torch.no_grad():
-                classification, nutritional_values = self.model(image_tensor.unsqueeze(0))
-                
-                # Get predictions
-                food_probs = F.softmax(classification, dim=1)
-                detected_foods = []
-                
-                # Get top predictions (for now, fallback to mock)
-                logger.info("Model inference successful, using mock data for demo")
-                detected_foods = self._mock_food_detection(image_path)
-                
+            return detected_foods
+            
         except Exception as e:
             logger.error(f"Food detection error: {e}")
-            logger.info("Falling back to mock detection")
-            # Fallback to mock detection
+            logger.info("Falling back to mock detection with database lookup")
             detected_foods = self._mock_food_detection(image_path)
-        
-        return detected_foods
+            
+            # Ensure nutrition data
+            for food in detected_foods:
+                if food.protein_content == 0 or food.calories == 0:
+                    nutrition = nutrition_db.get_food_nutrition(food.name)
+                    if nutrition:
+                        serving_g = 100
+                        if food.serving_size and 'g' in food.serving_size:
+                            try:
+                                serving_g = int(food.serving_size.replace('g', ''))
+                            except:
+                                pass
+                        food.protein_content = round((nutrition['protein'] * serving_g) / 100, 1)
+                        food.calories = int((nutrition['calories'] * serving_g) / 100)
+            
+            return detected_foods
     
     def _is_food_image(self, image_path: str) -> Tuple[bool, str]:
         """Check if the image contains food using Gemini Vision API"""
@@ -400,41 +427,84 @@ class ProteinOptimizer:
             # Load and prepare image for Gemini
             image = Image.open(image_path)
             
-            # Convert image to base64 for Gemini API
-            buffered = io.BytesIO()
-            image.save(buffered, format="JPEG")
-            image_data = buffered.getvalue()
+            logger.info(f"Sending image to Gemini: size={image.size}, mode={image.mode}")
             
             # Create the prompt for detailed food analysis
             prompt = """
-            Analyze this meal image and provide detailed nutritional information. Please identify all visible foods and return the information in the following JSON format:
+            You are an expert nutritionist and food recognition AI with extensive knowledge of food portions and nutritional values. 
+            Analyze this meal image with high precision.
 
+            CRITICAL INSTRUCTIONS:
+            
+            1. FOOD IDENTIFICATION:
+               - Identify ALL visible food items (main dishes, sides, toppings, sauces)
+               - Use descriptive names with preparation method (e.g., "grilled_chicken_breast", "fried_french_fries", "cheese_pizza")
+               - Be specific about unhealthy items: if it's fried, breaded, fast food, or junk food, include that in the name
+               - Confidence: 0.9-1.0 for clear items, 0.6-0.8 for partially visible, below 0.6 for uncertain
+            
+            2. PORTION ESTIMATION (CRITICAL):
+               - Use realistic visual portion sizes based on plate size and food density
+               - Typical portions: chicken breast (150-200g), burger (200-250g), pizza slice (120-150g), 
+                 rice/pasta (150-200g cooked), salad (100-150g), vegetables (80-120g)
+               - Account for actual visible amount, not standard servings
+            
+            3. NUTRITIONAL CALCULATION (MUST BE ACCURATE):
+               - First determine per-100g values from your nutritional database
+               - Then calculate TOTAL values based on estimated_grams: total = (per_100g * estimated_grams) / 100
+               - Include ALL macros: protein, carbs (including sugars), fat (including saturated fat), fiber
+               - For composite dishes (pizza, burger), break down ingredients and sum their nutrition
+            
+            4. FOOD TYPE AWARENESS:
+               - Junk/Fast Food: pizza, burgers, fries, chips, donuts, candy, soda → Use names like "cheese_pizza", "french_fries", "chocolate_donut"
+               - Healthy Foods: grilled proteins, vegetables, whole grains → Use names like "grilled_salmon", "steamed_broccoli", "quinoa"
+               - Preparation matters: "fried_chicken" vs "grilled_chicken", "white_rice" vs "brown_rice"
+            
+            Return ONLY this JSON (no markdown, no extra text):
             {
                 "detected_foods": [
                     {
-                        "name": "food_name",
+                        "name": "food_name_with_preparation",
                         "confidence": 0.95,
-                        "protein_content": 25.0,
-                        "calories": 165,
-                        "serving_size": "100g",
-                        "estimated_portion": "medium"
+                        "estimated_grams": 180,
+                        "protein_per_100g": 31.0,
+                        "calories_per_100g": 165,
+                        "carbs_per_100g": 0.5,
+                        "fat_per_100g": 3.6,
+                        "fiber_per_100g": 0.0,
+                        "total_protein": 55.8,
+                        "total_calories": 297,
+                        "total_carbs": 0.9,
+                        "total_fat": 6.5,
+                        "preparation_method": "grilled/fried/baked/steamed/raw",
+                        "food_category": "protein/vegetable/grain/junk_food/fruit",
+                        "visual_description": "Brief visual description"
                     }
-                ]
+                ],
+                "meal_summary": {
+                    "total_items": 3,
+                    "meal_type": "breakfast/lunch/dinner/snack",
+                    "overall_quality": "high/medium/low",
+                    "health_assessment": "Brief assessment (e.g., 'Balanced meal' or 'High in processed foods')",
+                    "notes": "Any additional observations"
+                }
             }
 
-            Guidelines:
-            - Be as accurate as possible with food identification
-            - Estimate realistic portion sizes (small, medium, large)
-            - Provide nutritional values per estimated portion
-            - Include confidence score (0.0 to 1.0)
-            - If uncertain about a food item, still include it but with lower confidence
-            - Focus on protein-rich foods but include all visible items
-            - Use standard food names (e.g., "chicken_breast", "broccoli", "quinoa")
-            - If this image does NOT contain food, return an empty array for detected_foods
+            VALIDATION CHECKS:
+            - total_protein = (protein_per_100g × estimated_grams) ÷ 100
+            - total_calories = (calories_per_100g × estimated_grams) ÷ 100
+            - total_carbs = (carbs_per_100g × estimated_grams) ÷ 100
+            - total_fat = (fat_per_100g × estimated_grams) ÷ 100
+            - If image has NO food, return {"detected_foods": [], "meal_summary": {"notes": "No food detected"}}
             """
             
             # Call Gemini Vision API
-            response = self.gemini_model.generate_content([prompt, image])
+            try:
+                response = self.gemini_model.generate_content([prompt, image])
+                logger.info(f"Gemini API response received: {response}")
+            except Exception as api_error:
+                logger.error(f"Gemini API call failed: {api_error}")
+                logger.error(f"Error type: {type(api_error).__name__}")
+                return []
             
             if response and response.text:
                 # Parse the JSON response
@@ -454,20 +524,71 @@ class ProteinOptimizer:
                     gemini_result = json.loads(response_text)
                     detected_foods = []
                     
+                    logger.info(f"Gemini raw response: {json.dumps(gemini_result, indent=2)}")
+                    
                     for food_data in gemini_result.get("detected_foods", []):
-                        # Create FoodItem objects from Gemini response
+                        # Extract nutrition data from the detailed Gemini response
+                        estimated_grams = float(food_data.get("estimated_grams", 100))
+                        
+                        # Get total nutrition values (already calculated by Gemini for the portion)
+                        total_protein = float(food_data.get("total_protein", 0.0))
+                        total_calories = int(food_data.get("total_calories", 0))
+                        total_carbs = float(food_data.get("total_carbs", 0.0))
+                        total_fat = float(food_data.get("total_fat", 0.0))
+                        total_fiber = float(food_data.get("total_fiber", 0.0))
+                        
+                        # If Gemini didn't provide totals, calculate from per-100g values
+                        if total_protein == 0 and "protein_per_100g" in food_data:
+                            protein_per_100g = float(food_data.get("protein_per_100g", 0))
+                            total_protein = (protein_per_100g * estimated_grams) / 100.0
+                        
+                        if total_calories == 0 and "calories_per_100g" in food_data:
+                            calories_per_100g = int(food_data.get("calories_per_100g", 0))
+                            total_calories = int((calories_per_100g * estimated_grams) / 100.0)
+                        
+                        if total_carbs == 0 and "carbs_per_100g" in food_data:
+                            carbs_per_100g = float(food_data.get("carbs_per_100g", 0))
+                            total_carbs = (carbs_per_100g * estimated_grams) / 100.0
+                        
+                        if total_fat == 0 and "fat_per_100g" in food_data:
+                            fat_per_100g = float(food_data.get("fat_per_100g", 0))
+                            total_fat = (fat_per_100g * estimated_grams) / 100.0
+                        
+                        if total_fiber == 0 and "fiber_per_100g" in food_data:
+                            fiber_per_100g = float(food_data.get("fiber_per_100g", 0))
+                            total_fiber = (fiber_per_100g * estimated_grams) / 100.0
+                        
+                        # Fallback to old format for backward compatibility
+                        if total_protein == 0:
+                            total_protein = float(food_data.get("protein_content", 0.0))
+                        if total_calories == 0:
+                            total_calories = int(food_data.get("calories", 0))
+                        
+                        serving_size = f"{int(estimated_grams)}g"
+                        if "serving_size" in food_data:
+                            serving_size = food_data["serving_size"]
+                        
+                        # Create FoodItem objects from Gemini response with full nutrition data
                         food_item = FoodItem(
                             name=food_data.get("name", "unknown_food"),
                             confidence=float(food_data.get("confidence", 0.5)),
-                            protein_content=float(food_data.get("protein_content", 0.0)),
-                            calories=int(food_data.get("calories", 0)),
-                            serving_size=food_data.get("serving_size", "100g"),
-                            bounding_box=(0, 0, 100, 100)  # Gemini doesn't provide bounding boxes
+                            protein_content=round(total_protein, 1),
+                            calories=total_calories,
+                            serving_size=serving_size,
+                            bounding_box=(0, 0, 100, 100),  # Gemini doesn't provide bounding boxes
+                            carbs=round(total_carbs, 1),
+                            fat=round(total_fat, 1),
+                            fiber=round(total_fiber, 1)
                         )
                         detected_foods.append(food_item)
+                        
+                        logger.info(f"Parsed food from Gemini: {food_item.name}")
+                        logger.info(f"  Nutrition: {food_item.protein_content}g protein, {food_item.carbs}g carbs, {food_item.fat}g fat, {food_item.calories} cal")
+                        logger.info(f"  Confidence: {food_item.confidence:.2f}, Serving: {food_item.serving_size}")
                     
                     if detected_foods:
-                        logger.info(f"Gemini detected {len(detected_foods)} foods: {[f.name for f in detected_foods]}")
+                        meal_summary = gemini_result.get("meal_summary", {})
+                        logger.info(f"Gemini detected {len(detected_foods)} foods. Meal summary: {meal_summary}")
                         return detected_foods
                     else:
                         logger.warning("Gemini response contained no food items")
@@ -560,8 +681,68 @@ class ProteinOptimizer:
         logger.info(f"Total protein: {sum(f.protein_content for f in mock_foods):.1f}g, Total calories: {sum(f.calories for f in mock_foods)}")
         return mock_foods
     
+    def _preprocess_uploaded_image(self, image_bytes: bytes, output_path: str) -> str:
+        """Preprocess uploaded image for optimal Gemini recognition"""
+        try:
+            # Load image from bytes
+            image = Image.open(io.BytesIO(image_bytes))
+            
+            logger.info(f"Original image: size={image.size}, mode={image.mode}, format={image.format}")
+            
+            # Convert RGBA/P to RGB
+            if image.mode in ('RGBA', 'P', 'LA'):
+                # Create white background
+                rgb_image = Image.new('RGB', image.size, (255, 255, 255))
+                if image.mode == 'RGBA' or image.mode == 'LA':
+                    rgb_image.paste(image, mask=image.split()[-1])  # Use alpha channel as mask
+                else:
+                    rgb_image.paste(image)
+                image = rgb_image
+            elif image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            # Resize if image is too large (Gemini works best with images under 4MB and reasonable dimensions)
+            max_dimension = 2048  # Gemini's recommended max dimension
+            if image.size[0] > max_dimension or image.size[1] > max_dimension:
+                # Calculate new size maintaining aspect ratio
+                ratio = min(max_dimension / image.size[0], max_dimension / image.size[1])
+                new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
+                image = image.resize(new_size, Image.LANCZOS)
+                logger.info(f"Resized image to: {new_size}")
+            
+            # Ensure minimum size (Gemini needs images to be at least a certain size for good recognition)
+            min_dimension = 512
+            if image.size[0] < min_dimension or image.size[1] < min_dimension:
+                # Calculate new size maintaining aspect ratio
+                ratio = max(min_dimension / image.size[0], min_dimension / image.size[1])
+                new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
+                image = image.resize(new_size, Image.LANCZOS)
+                logger.info(f"Upscaled image to: {new_size}")
+            
+            # Save with optimal quality for Gemini
+            image.save(output_path, 'JPEG', quality=85, optimize=True)
+            
+            # Check file size
+            file_size = os.path.getsize(output_path) / (1024 * 1024)  # Size in MB
+            logger.info(f"Preprocessed image saved: size={image.size}, file_size={file_size:.2f}MB")
+            
+            # If still too large, reduce quality
+            if file_size > 4.0:
+                image.save(output_path, 'JPEG', quality=70, optimize=True)
+                file_size = os.path.getsize(output_path) / (1024 * 1024)
+                logger.info(f"Reduced quality to fit size limit: {file_size:.2f}MB")
+            
+            return output_path
+            
+        except Exception as e:
+            logger.error(f"Image preprocessing error: {e}")
+            # Fallback: save original bytes
+            with open(output_path, 'wb') as f:
+                f.write(image_bytes)
+            return output_path
+    
     def _preprocess_image(self, image: Image.Image) -> torch.Tensor:
-        """Preprocess image for model input"""
+        """Preprocess image for model input (PyTorch CNN-GRU)"""
         # Convert RGBA to RGB if necessary
         if image.mode == 'RGBA':
             # Create a white background
@@ -579,42 +760,67 @@ class ProteinOptimizer:
         return image_tensor
     
     def _calculate_nutrition(self, detected_foods: List[FoodItem]) -> Tuple[float, float, Dict[str, float]]:
-        """Calculate total nutritional content using database"""
+        """Calculate total nutritional content - uses values from Gemini or database"""
         total_protein = 0
         total_calories = 0
         total_carbs = 0
         total_fat = 0
         
         for food in detected_foods:
-            # Get nutrition from database
-            nutrition = nutrition_db.get_food_nutrition(food.name)
-            if nutrition:
-                # Update food item with database values
-                food.protein_content = nutrition['protein']
-                food.calories = nutrition['calories']
-                
-                # Accumulate totals (assuming 100g portions)
-                total_protein += nutrition['protein']
-                total_calories += nutrition['calories']
-                total_carbs += nutrition['carbs']
-                total_fat += nutrition['fat']
-            else:
-                # Fallback to existing food database
-                food_data = self.food_database.get(food.name, {})
-                food.protein_content = food_data.get('protein', 0)
-                food.calories = food_data.get('calories', 0)
+            # If food already has nutrition values from Gemini, use them directly
+            if food.protein_content > 0 or food.calories > 0:
+                logger.info(f"Using Gemini nutrition for {food.name}: {food.protein_content}g protein, {food.carbs}g carbs, {food.fat}g fat, {food.calories} cal")
                 total_protein += food.protein_content
                 total_calories += food.calories
-                total_carbs += food_data.get('carbs', 0)
-                total_fat += food_data.get('fat', 0)
+                total_carbs += food.carbs
+                total_fat += food.fat
+            else:
+                # Only look up in database if food has no nutrition data
+                logger.info(f"Looking up nutrition for {food.name} in database...")
+                nutrition = nutrition_db.get_food_nutrition(food.name)
+                if nutrition:
+                    # Extract serving size from food item
+                    serving_g = 100  # default
+                    if food.serving_size:
+                        try:
+                            # Extract number from strings like "150g", "100g", etc.
+                            import re
+                            match = re.search(r'(\d+)', food.serving_size)
+                            if match:
+                                serving_g = int(match.group(1))
+                        except:
+                            pass
+                    
+                    # Calculate nutrition based on actual serving size
+                    food.protein_content = round((nutrition['protein'] * serving_g) / 100, 1)
+                    food.calories = int((nutrition['calories'] * serving_g) / 100)
+                    food.carbs = round((nutrition['carbs'] * serving_g) / 100, 1)
+                    food.fat = round((nutrition['fat'] * serving_g) / 100, 1)
+                    
+                    logger.info(f"Database lookup for {food.name} ({serving_g}g): {food.protein_content}g protein, {food.carbs}g carbs, {food.fat}g fat, {food.calories} cal")
+                    
+                    # Accumulate totals
+                    total_protein += food.protein_content
+                    total_calories += food.calories
+                    total_carbs += food.carbs
+                    total_fat += food.fat
+                else:
+                    logger.warning(f"No nutrition data found for {food.name}, using zeros")
+                    # Keep existing values (likely 0)
+                    total_protein += food.protein_content
+                    total_calories += food.calories
+                    total_carbs += food.carbs
+                    total_fat += food.fat
         
         nutritional_balance = {
-            'protein': total_protein,
-            'calories': total_calories,
-            'carbs': total_carbs,
-            'fat': total_fat
+            'protein': round(total_protein, 1),
+            'calories': int(total_calories),
+            'carbs': round(total_carbs, 1),
+            'fat': round(total_fat, 1)
         }
         
+        logger.info(f"=== TOTAL NUTRITION ===")
+        logger.info(f"Protein: {total_protein:.1f}g | Carbs: {total_carbs:.1f}g | Fat: {total_fat:.1f}g | Calories: {total_calories}")
         return total_protein, total_calories, nutritional_balance
     
     def _get_user_profile(self, user_id: str) -> Dict:
@@ -739,31 +945,128 @@ class ProteinOptimizer:
         return True
     
     def _calculate_meal_quality(self, detected_foods: List[FoodItem], nutritional_balance: Dict[str, float]) -> float:
-        """Calculate meal quality score (0-100)"""
-        score = 0.0
+        """Calculate meal quality score (0-100) based on food types and nutritional balance"""
+        score = 50.0  # Start at neutral score
         
-        # Protein content score (40 points)
-        protein_ratio = nutritional_balance['protein'] / max(nutritional_balance['calories'] / 10, 1)
-        if 0.8 <= protein_ratio <= 1.2:  # Good protein-to-calorie ratio
-            score += 40
-        elif 0.6 <= protein_ratio <= 1.4:
-            score += 30
-        else:
-            score += 20
+        food_names = [food.name.lower() for food in detected_foods]
         
-        # Variety score (30 points)
-        unique_food_types = len(set(food.name for food in detected_foods))
-        score += min(unique_food_types * 10, 30)
+        # Define food categories with more comprehensive lists
+        junk_foods = [
+            'pizza', 'burger', 'fries', 'chips', 'soda', 'candy', 'chocolate', 'ice_cream',
+            'donut', 'cake', 'cookie', 'pastry', 'fried_chicken', 'hot_dog', 'nachos',
+            'popcorn', 'milkshake', 'energy_drink', 'french_fries', 'onion_rings',
+            'taco', 'burrito', 'quesadilla', 'deep_fried', 'processed', 'fast_food',
+            'nugget', 'mcdonalds', 'kfc', 'dominos', 'pepperoni', 'cheese_pizza'
+        ]
         
-        # Balance score (30 points)
-        if nutritional_balance['carbs'] > 0 and nutritional_balance['fat'] > 0:
-            score += 30
-        elif nutritional_balance['carbs'] > 0 or nutritional_balance['fat'] > 0:
-            score += 20
-        else:
+        unhealthy_keywords = [
+            'fried', 'deep_fried', 'battered', 'breaded', 'crispy', 'loaded',
+            'double', 'triple', 'extra_cheese', 'bacon', 'creamy', 'buttery',
+            'mayo', 'sauce'
+        ]
+        
+        healthy_foods = [
+            'salad', 'vegetables', 'fruit', 'broccoli', 'spinach', 'kale', 'quinoa',
+            'chicken_breast', 'salmon', 'tuna', 'tofu', 'lentils', 'beans', 'egg',
+            'greek_yogurt', 'oats', 'brown_rice', 'sweet_potato', 'avocado', 'nuts',
+            'grilled', 'steamed', 'baked', 'roasted', 'boiled', 'lettuce', 'tomato',
+            'cucumber', 'carrot', 'bell_pepper', 'asparagus', 'green_beans'
+        ]
+        
+        # Count food types
+        junk_food_count = sum(1 for food in food_names if any(junk in food for junk in junk_foods))
+        unhealthy_prep_count = sum(1 for food in food_names if any(keyword in food for keyword in unhealthy_keywords))
+        healthy_food_count = sum(1 for food in food_names if any(healthy in food for healthy in healthy_foods))
+        
+        logger.info(f"Quality analysis: {junk_food_count} junk, {healthy_food_count} healthy, {unhealthy_prep_count} unhealthy prep")
+        
+        # Apply heavy penalties for junk food
+        if junk_food_count > 0:
+            penalty = junk_food_count * 30
+            score -= penalty
+            logger.info(f"Junk food penalty: -{penalty} points ({junk_food_count} junk items)")
+        
+        # Penalty for unhealthy preparation
+        if unhealthy_prep_count > 0:
+            penalty = unhealthy_prep_count * 15
+            score -= penalty
+            logger.info(f"Unhealthy preparation penalty: -{penalty} points")
+        
+        # Big bonus for healthy foods
+        if healthy_food_count > 0:
+            bonus = min(healthy_food_count * 10, 30)
+            score += bonus
+            logger.info(f"Healthy food bonus: +{bonus} points ({healthy_food_count} healthy items)")
+        
+        # Nutritional balance score (max 25 points)
+        total_calories = nutritional_balance.get('calories', 1)
+        total_protein = nutritional_balance.get('protein', 0)
+        total_carbs = nutritional_balance.get('carbs', 0)
+        total_fat = nutritional_balance.get('fat', 0)
+        
+        # Protein quality scoring (max 25 points)
+        if total_calories > 0 and total_protein > 0:
+            protein_percentage = (total_protein * 4 / total_calories) * 100
+            protein_score = 0
+            
+            if protein_percentage >= 30:  # Excellent protein (30%+)
+                protein_score = 25
+            elif protein_percentage >= 20:  # Very good (20-30%)
+                protein_score = 20
+            elif protein_percentage >= 15:  # Good (15-20%)
+                protein_score = 15
+            elif protein_percentage >= 10:  # Moderate (10-15%)
+                protein_score = 10
+            else:  # Low protein (<10%)
+                protein_score = 5
+            
+            score += protein_score
+            logger.info(f"Protein quality: {protein_percentage:.1f}% of calories = +{protein_score} points")
+        
+        # Macronutrient balance (max 15 points)
+        if total_carbs > 0 and total_fat > 0 and total_protein > 0:
+            # All three macros present = balanced meal
+            score += 15
+            logger.info(f"Balanced macros: +15 points")
+        elif (total_carbs > 0 and total_protein > 0) or (total_fat > 0 and total_protein > 0):
+            # Two macros present = moderately balanced
             score += 10
+            logger.info(f"Moderately balanced: +10 points")
         
-        return min(100.0, score)
+        # Calorie appropriateness (penalty for extreme calories)
+        if total_calories > 1200:
+            score -= 15
+            logger.info(f"Very high calorie meal ({total_calories} cal): -15 points")
+        elif total_calories > 900:
+            score -= 10
+            logger.info(f"High calorie meal ({total_calories} cal): -10 points")
+        elif total_calories < 150:
+            score -= 5
+            logger.info(f"Very low calorie snack: -5 points")
+        
+        # Variety bonus (max 10 points)
+        unique_food_count = len(detected_foods)
+        variety_score = 0
+        if unique_food_count >= 4:
+            variety_score = 10
+        elif unique_food_count >= 3:
+            variety_score = 7
+        elif unique_food_count >= 2:
+            variety_score = 4
+        
+        if variety_score > 0:
+            score += variety_score
+            logger.info(f"Variety bonus ({unique_food_count} items): +{variety_score} points")
+        
+        # Ensure score is within 0-100
+        final_score = max(0, min(100, score))
+        
+        # Log quality assessment
+        quality_level = "EXCELLENT" if final_score >= 80 else "GOOD" if final_score >= 60 else "FAIR" if final_score >= 40 else "POOR"
+        logger.info(f"=== FINAL MEAL QUALITY: {final_score:.1f}/100 ({quality_level}) ===")
+        logger.info(f"  Summary: {total_protein:.1f}g protein, {total_calories} cal, {total_carbs:.1f}g carbs, {total_fat:.1f}g fat")
+        
+        return final_score
     
     def _store_meal_data(self, user_id: str, detected_foods: List[FoodItem], total_protein: float, total_calories: float):
         """Store meal data for user using database"""

@@ -1,0 +1,110 @@
+# Squat Exercise Configuration
+# =============================
+# Keypoint configuration for squat analysis
+
+exercise:
+  name: squat
+  display_name: "Squat"
+  description: "Lower body compound exercise targeting quads, glutes, and hamstrings"
+
+# COCO Pose Keypoint indices used
+# 11: left_hip, 12: right_hip
+# 13: left_knee, 14: right_knee
+# 15: left_ankle, 16: right_ankle
+
+pose_tracking:
+  # Primary angle measurement: hip -> knee -> ankle
+  primary_keypoints: [11, 13, 15]  # Left side
+  secondary_keypoints: [12, 14, 16]  # Right side (for symmetry check)
+  
+  # Angle thresholds
+  angles:
+    standing: 170  # Fully extended position (degrees)
+    bottom: 90     # Bottom squat position (degrees)
+    depth_threshold: 100  # Below this is considered "full depth"
+  
+  # Pose type for AIGym
+  pose_type: "squat"
+
+# Key joints to monitor for form analysis
+key_joints:
+  - left_hip
+  - right_hip
+  - left_knee
+  - right_knee
+  - left_ankle
+  - right_ankle
+  - left_shoulder
+  - right_shoulder
+
+# Form rules with specific checks
+form_rules:
+  knee_over_toes:
+    check: true
+    description: "Knees should not extend past toes"
+    feedback: "Keep your knees behind or in line with your toes"
+    check_type: "x_position_comparison"
+    keypoints: [13, 15]  # knee vs ankle
+    threshold: 50  # pixels
+    severity: "warning"
+  
+  back_straight:
+    check: true
+    description: "Back should maintain neutral spine"
+    feedback: "Maintain a straight back throughout the movement"
+    check_type: "angle_consistency"
+    keypoints: [5, 11, 13]  # shoulder -> hip -> knee
+    min_angle: 45
+    max_angle: 90
+    severity: "warning"
+  
+  depth:
+    check: true
+    description: "Achieve parallel or below"
+    feedback: "Try to reach parallel or below for full range of motion"
+    check_type: "min_angle"
+    keypoints: [11, 13, 15]
+    target_angle: 90
+    tolerance: 15
+    severity: "info"
+  
+  feet_width:
+    check: true
+    description: "Feet should be shoulder-width apart"
+    feedback: "Keep feet shoulder-width apart"
+    check_type: "width_comparison"
+    keypoints: [15, 16]  # Left and right ankle
+    reference: [5, 6]    # Left and right shoulder
+    ratio_min: 0.8
+    ratio_max: 1.5
+    severity: "info"
+  
+  knee_tracking:
+    check: true
+    description: "Knees should track over toes"
+    feedback: "Keep your knees tracking over your toes, not caving inward"
+    check_type: "lateral_deviation"
+    keypoints: [13, 14]  # Both knees
+    reference: [15, 16]  # Both ankles
+    max_deviation: 30  # pixels
+    severity: "warning"
+
+# Scoring parameters
+scoring:
+  rep_timing:
+    ideal_duration: 3.0  # seconds per rep
+    min_duration: 1.5
+    max_duration: 5.0
+  
+  rom_weight: 0.3
+  posture_weight: 0.35
+  consistency_weight: 0.2
+  tempo_weight: 0.15
+
+# Common mistakes to detect
+common_mistakes:
+  - "Knees caving inward (valgus)"
+  - "Heels lifting off the ground"
+  - "Excessive forward lean"
+  - "Partial depth (not reaching parallel)"
+  - "Back rounding at the bottom"
