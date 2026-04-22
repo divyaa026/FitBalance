@@ -283,18 +283,18 @@ class BiomechanicsCoach:
                 model_path = str(dest)
                 logger.info(f"Downloaded pose model to {dest}")
 
+            # Use IMAGE mode: stateless per-frame detection, no monotonically
+            # increasing timestamp requirement — correct for uploaded video files.
             options = PoseLandmarkerOptions(
                 base_options=BaseOptions(model_asset_path=model_path),
-                running_mode=RunningMode.VIDEO,
+                running_mode=RunningMode.IMAGE,
                 num_poses=1,
                 min_pose_detection_confidence=0.4,
                 min_pose_presence_confidence=0.4,
-                min_tracking_confidence=0.4,
             )
             self.mediapipe_pose = PoseLandmarker.create_from_options(options)
-            self.mediapipe_RunningMode = RunningMode
             self.pose_backend = 'mediapipe'
-            logger.info(f"MediaPipe PoseLandmarker initialized from {model_path}")
+            logger.info(f"MediaPipe PoseLandmarker (IMAGE mode) initialized from {model_path}")
         except Exception as e:
             logger.error(f"Failed to initialize MediaPipe fallback: {e}")
             self.mediapipe_pose = None
@@ -313,8 +313,8 @@ class BiomechanicsCoach:
     ) -> Tuple[List[JointPosition], int, float]:
         """Extract 17-point COCO-like joints from a frame using MediaPipe PoseLandmarker.
 
-        MediaPipe 0.10+ Tasks API: detect_for_video() requires a monotonically
-        increasing timestamp_ms.
+        Uses IMAGE running mode — stateless, works across multiple requests.
+        The timestamp_ms parameter is kept for signature compatibility but unused.
         """
         if self.mediapipe_pose is None:
             return [], 0, 0.0
@@ -322,7 +322,7 @@ class BiomechanicsCoach:
         import mediapipe as mp
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
-        result = self.mediapipe_pose.detect_for_video(mp_image, timestamp_ms)
+        result = self.mediapipe_pose.detect(mp_image)
 
         if not result.pose_landmarks or len(result.pose_landmarks) == 0:
             return [], 0, 0.0
