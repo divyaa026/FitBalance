@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { Video, Upload, TrendingUp, AlertCircle, Camera, Lightbulb, Activity, CheckCircle, AlertTriangle, XCircle, Info } from "lucide-react";
+import { Video, Upload, TrendingUp, AlertCircle, Camera, Lightbulb, Activity, CheckCircle, AlertTriangle, XCircle, Info, Radio } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -11,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { TorqueHeatmap } from '@/components/TorqueHeatmap';
 import { BodyStressMap } from '@/components/BodyStressMap';
 import { Badge } from "@/components/ui/badge";
+import { Link } from "react-router-dom";
 
 const exercises = [
   "Squat",
@@ -215,6 +216,31 @@ export default function Biomechanics() {
             Upload your exercise videos for AI-powered form analysis and personalized coaching
           </p>
         </div>
+
+        {/* Live Analysis Banner */}
+        <Card className="glass-card mb-6 animate-slide-up bg-gradient-to-r from-primary/10 to-secondary/10 border-primary/20">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between flex-wrap gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-full bg-primary/20">
+                  <Radio className="h-5 w-5 text-primary animate-pulse" />
+                </div>
+                <div>
+                  <h3 className="font-semibold">Real-Time Form Analysis</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Get instant AI feedback with voice coaching while you exercise
+                  </p>
+                </div>
+              </div>
+              <Link to="/biomechanics/live">
+                <Button className="gap-2">
+                  <Activity className="h-4 w-4" />
+                  Start Live Session
+                </Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Video Capture Section */}
         <Card className="glass-card mb-6 animate-slide-up">
@@ -547,7 +573,11 @@ export default function Biomechanics() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <BodyStressMap data={(analysis as any).heatmap_data} formScore={analysis?.form_score} />
+          <BodyStressMap 
+            data={(analysis as any).heatmap_data} 
+            formScore={analysis?.form_score} 
+            formErrors={analysis?.form_errors}
+          />
         </CardContent>
       </Card>
     )}

@@ -203,13 +203,27 @@ export default function Nutrition() {
             title: "Analysis Complete",
             description: "Your meal has been analyzed successfully!",
           });
-        } catch (err) {
+        } catch (err: any) {
           console.error('Analysis error:', err);
+          
+          // Extract the actual error message from the API
+          const errorMessage = err?.message || 'Unable to analyze the meal.';
+          
+          // Check if this is a non-food image error
+          const isNotFoodError = errorMessage.toLowerCase().includes('food') ||
+                                 errorMessage.toLowerCase().includes('meal') ||
+                                 errorMessage.toLowerCase().includes('selfie') ||
+                                 errorMessage.toLowerCase().includes('portrait') ||
+                                 errorMessage.toLowerCase().includes('scenery');
+          
           toast({
-            title: "Analysis Failed",
-            description: "Unable to analyze the meal. Please try again.",
+            title: isNotFoodError ? "Invalid Image" : "Analysis Failed",
+            description: errorMessage,
             variant: "destructive",
           });
+          
+          // Clear the captured image on error
+          setCapturedImage(null);
         }
       }
     }, 'image/jpeg', 0.8);
@@ -252,13 +266,27 @@ export default function Nutrition() {
         title: "Upload Successful",
         description: "Your meal has been analyzed successfully!",
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error('Upload error:', err);
+      
+      // Extract the actual error message from the API
+      const errorMessage = err?.message || 'Unable to analyze the uploaded image.';
+      
+      // Check if this is a non-food image error
+      const isNotFoodError = errorMessage.toLowerCase().includes('food') ||
+                             errorMessage.toLowerCase().includes('meal') ||
+                             errorMessage.toLowerCase().includes('selfie') ||
+                             errorMessage.toLowerCase().includes('portrait') ||
+                             errorMessage.toLowerCase().includes('scenery');
+      
       toast({
-        title: "Upload Failed",
-        description: "Unable to analyze the uploaded image. Please try again.",
+        title: isNotFoodError ? "Invalid Image" : "Upload Failed",
+        description: errorMessage,
         variant: "destructive",
       });
+      
+      // Clear the captured image on error
+      setCapturedImage(null);
     }
     
     // Reset file input

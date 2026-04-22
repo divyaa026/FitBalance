@@ -92,6 +92,8 @@ class NutritionDatabase:
         self.database_url = database_url
         self.engine = None
         self.SessionLocal = None
+        # Always initialize in-memory storage for fallback
+        self._init_fallback_storage()
         self._init_connection()
     
     def _init_connection(self):
@@ -102,8 +104,7 @@ class NutritionDatabase:
             logger.info("Database connection initialized successfully")
         except Exception as e:
             logger.error(f"Database connection failed: {e}")
-            # Fallback to in-memory storage for demo
-            self._init_fallback_storage()
+            # Already have fallback storage initialized
     
     def _init_fallback_storage(self):
         """Initialize in-memory storage as fallback"""
@@ -163,8 +164,9 @@ class NutritionDatabase:
     def log_meal(self, user_id: int, image_path: str, detected_foods: Dict, 
                  total_protein: float, total_calories: float, confidence: float):
         """Log a meal with detected foods and nutrition"""
+        db_success = False
         try:
-            if self.engine:
+            if self.engine and self.SessionLocal:
                 session = self.SessionLocal()
                 meal_log = MealLogs(
                     user_id=user_id,
@@ -177,20 +179,23 @@ class NutritionDatabase:
                 session.add(meal_log)
                 session.commit()
                 session.close()
-                logger.info(f"Meal logged for user {user_id}")
-            else:
-                # Fallback storage
-                if user_id not in self.meal_logs:
-                    self.meal_logs[user_id] = []
-                self.meal_logs[user_id].append({
-                    'timestamp': datetime.now(),
-                    'detected_foods': detected_foods,
-                    'total_protein': total_protein,
-                    'total_calories': total_calories,
-                    'confidence': confidence
-                })
+                logger.info(f"Meal logged to database for user {user_id}")
+                db_success = True
         except Exception as e:
-            logger.error(f"Meal logging failed: {e}")
+            logger.warning(f"Database meal logging failed, using in-memory: {e}")
+        
+        # Always log to in-memory storage as well (for demos/fallback)
+        if user_id not in self.meal_logs:
+            self.meal_logs[user_id] = []
+        self.meal_logs[user_id].append({
+            'timestamp': datetime.now(),
+            'image_path': image_path,
+            'detected_foods': detected_foods,
+            'total_protein': total_protein,
+            'total_calories': total_calories,
+            'confidence': confidence
+        })
+        logger.info(f"Meal logged to memory for user {user_id}, total meals: {len(self.meal_logs[user_id])}")
     
     def get_user_health_metrics(self, user_id: int, days: int = 7) -> pd.DataFrame:
         """Get recent health metrics for a user"""
@@ -417,8 +422,17 @@ class NutritionDatabase:
     
     def get_recent_meals(self, user_id: int, days: int = 7) -> List[Dict]:
         """Get recent meals for a user"""
+        # Always check in-memory first (most reliable for demo mode)
+        in_memory_meals = self.meal_logs.get(user_id, [])
+        
+        if in_memory_meals:
+            # Return from in-memory storage (already sorted by recent)
+            logger.info(f"Returning {len(in_memory_meals)} meals from memory for user {user_id}")
+            return in_memory_meals[-days*10:]  # Return up to days*10 meals
+        
+        # Try database if no in-memory data
         try:
-            if self.engine:
+            if self.engine and self.SessionLocal:
                 session = self.SessionLocal()
                 recent_meals = session.query(MealLogs).filter(
                     MealLogs.user_id == user_id,
@@ -432,12 +446,10 @@ class NutritionDatabase:
                     'total_protein': meal.total_protein,
                     'total_calories': meal.total_calories
                 } for meal in recent_meals]
-            else:
-                # Fallback
-                return self.meal_logs.get(user_id, [])[-days:]
         except Exception as e:
-            logger.error(f"Recent meals retrieval failed: {e}")
-            return []
+            logger.warning(f"Database meals retrieval failed: {e}")
+        
+        return []
 
 # Global database instance
 nutrition_db = NutritionDatabase()

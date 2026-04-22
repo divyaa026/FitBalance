@@ -147,6 +147,7 @@ export function useBurnout() {
     stress_level: number;
     recovery_time: number;
     performance_trend: string;
+    age: number;
   }) => {
     setIsLoading(true);
     setError(null);

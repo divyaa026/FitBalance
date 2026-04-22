@@ -3,6 +3,10 @@ import { useState } from 'react';
 interface BodyStressMapProps {
   data: { [key: string]: number[][] };
   formScore?: number;
+  formErrors?: Array<{
+    body_part: string;
+    severity: string;
+  }>;
 }
 
 interface JointStress {
@@ -12,33 +16,58 @@ interface JointStress {
   description: string;
 }
 
-export function BodyStressMap({ data, formScore }: BodyStressMapProps) {
+export function BodyStressMap({ data, formScore, formErrors }: BodyStressMapProps) {
   const [selectedJoint, setSelectedJoint] = useState<string | null>(null);
 
-  // Calculate average torque for each joint from heatmap data
+  // Calculate stress level based on form score and form errors
   const getJointStress = (jointKey: string): JointStress => {
     const rawData = data[`${jointKey}_torque`];
-    if (!rawData || !Array.isArray(rawData)) {
-      return { name: jointKey, level: 'low', avgTorque: 0, description: 'No data available' };
+    
+    // Calculate average torque for display (normalize to 0-1 scale)
+    let avgTorque = 0;
+    if (rawData && Array.isArray(rawData)) {
+      const allValues = rawData.flat().filter(v => typeof v === 'number' && v > 0);
+      const rawAvg = allValues.length > 0 ? allValues.reduce((a, b) => a + b, 0) / allValues.length : 0;
+      // Normalize: torque values typically range 0-150, so divide by 150
+      avgTorque = Math.min(1, rawAvg / 150);
     }
     
-    // Flatten and calculate average
-    const allValues = rawData.flat().filter(v => typeof v === 'number' && v > 0);
-    const avgTorque = allValues.length > 0 ? allValues.reduce((a, b) => a + b, 0) / allValues.length : 0;
-    
-    // Determine stress level
-    let level: 'low' | 'moderate' | 'high';
+    // Determine stress level based on form errors for this joint
+    let level: 'low' | 'moderate' | 'high' = 'low';
     let description: string;
     
-    if (avgTorque > 0.5) {
-      level = 'high';
-      description = `High stress detected! Average torque: ${avgTorque.toFixed(2)} Nm. Consider adjusting your form.`;
-    } else if (avgTorque > 0.2) {
-      level = 'moderate';
-      description = `Moderate stress. Average torque: ${avgTorque.toFixed(2)} Nm. Monitor this area.`;
+    // Check if there's a form error for this joint
+    const jointError = formErrors?.find(
+      err => err.body_part.toLowerCase().includes(jointKey.toLowerCase()) ||
+             jointKey.toLowerCase().includes(err.body_part.toLowerCase().replace(/s$/, ''))
+    );
+    
+    if (jointError) {
+      // Use the severity from form errors
+      if (jointError.severity === 'severe') {
+        level = 'high';
+        description = `High stress on ${jointKey}! Form needs correction. Check the recommendations below.`;
+      } else if (jointError.severity === 'moderate') {
+        level = 'moderate';
+        description = `Moderate stress on ${jointKey}. Minor adjustments needed.`;
+      } else {
+        level = 'low';
+        description = `Low stress on ${jointKey}. Minor improvement possible.`;
+      }
+    } else if (formScore !== undefined) {
+      // Use overall form score if no specific error for this joint
+      if (formScore >= 80) {
+        level = 'low';
+        description = `${jointKey.charAt(0).toUpperCase() + jointKey.slice(1)} form is good! Keep it up.`;
+      } else if (formScore >= 60) {
+        level = 'moderate';
+        description = `${jointKey.charAt(0).toUpperCase() + jointKey.slice(1)} could use some improvement.`;
+      } else {
+        level = 'high';
+        description = `${jointKey.charAt(0).toUpperCase() + jointKey.slice(1)} needs attention. Review form tips.`;
+      }
     } else {
-      level = 'low';
-      description = `Low stress - Good form! Average torque: ${avgTorque.toFixed(2)} Nm.`;
+      description = 'No specific data available for this joint.';
     }
     
     return { name: jointKey, level, avgTorque, description };

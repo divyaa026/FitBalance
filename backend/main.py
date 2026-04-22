@@ -8,9 +8,19 @@ import uvicorn
 import sys
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from .env file (check both backend and project root)
+backend_path = Path(__file__).parent
+project_root = backend_path.parent
+
+# Try loading from project root first, then backend folder
+if (project_root / '.env').exists():
+    load_dotenv(project_root / '.env')
+elif (backend_path / '.env').exists():
+    load_dotenv(backend_path / '.env')
 
 # Add the backend directory to Python path
-backend_path = Path(__file__).parent
 sys.path.insert(0, str(backend_path))
 
 # Import the FastAPI app from api/main.py
@@ -23,10 +33,10 @@ def main():
     port = int(os.getenv("PORT", "8000"))
     debug = os.getenv("DEBUG", "True").lower() == "true"
     
-    print("🚀 Starting FitBalance Backend Server...")
-    print(f"🌐 Server will run on: http://{host}:{port}")
-    print(f"🔧 Debug mode: {debug}")
-    print("📚 API Documentation: http://localhost:8000/docs")
+    print("[START] Starting FitBalance Backend Server...")
+    print(f"[INFO] Server will run on: http://{host}:{port}")
+    print(f"[CONFIG] Debug mode: {debug}")
+    print("[DOCS] API Documentation: http://localhost:8000/docs")
     
     # Run the server
     uvicorn.run(

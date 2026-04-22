@@ -3,6 +3,8 @@ Nutrition Module
 Dynamic protein optimization using meal photos with CNN-GRU architecture and Gemini Vision API
 """
 
+from __future__ import annotations
+
 # Optional PyTorch imports - fallback gracefully if not available
 try:
     import torch
@@ -28,16 +30,24 @@ from datetime import datetime
 
 # Optional Gemini import - fallback gracefully if not available
 try:
-    # Updated to use the new google.genai package
-    import google.genai as genai
+    # Try the new package first, fallback to legacy package
+    try:
+        import google.genai as genai
+        from google.genai import types as genai_types
+        GEMINI_NEW_API = True
+    except ImportError:
+        import google.generativeai as genai
+        genai_types = None
+        GEMINI_NEW_API = False
     GEMINI_AVAILABLE = True
 except ImportError:
     genai = None
+    genai_types = None
     GEMINI_AVAILABLE = False
+    GEMINI_NEW_API = False
 
 import base64
 import io
-
 # Import database module
 from database.nutrition_db import nutrition_db
 
@@ -67,76 +77,88 @@ class MealAnalysis:
     meal_quality_score: float  # 0-100
     nutritional_balance: Dict[str, float]
 
-class CNNGRUModel(nn.Module):
-    """CNN-GRU model for food recognition and nutritional analysis"""
-    
-    def __init__(self, num_classes=100, hidden_dim=128, num_layers=2):
-        super(CNNGRUModel, self).__init__()
+if TORCH_AVAILABLE:
+    class CNNGRUModel(nn.Module):
+        """CNN-GRU model for food recognition and nutritional analysis"""
         
-        # CNN for feature extraction
-        self.conv_layers = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Conv2d(128, 256, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Conv2d(256, 512, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((1, 1))
-        )
+        def __init__(self, num_classes=100, hidden_dim=128, num_layers=2):
+            super(CNNGRUModel, self).__init__()
+            
+            # CNN for feature extraction
+            self.conv_layers = nn.Sequential(
+                nn.Conv2d(3, 64, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(2),
+                nn.Conv2d(64, 128, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(2),
+                nn.Conv2d(128, 256, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(2),
+                nn.Conv2d(256, 512, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.AdaptiveAvgPool2d((1, 1))
+            )
+            
+            # GRU for sequential processing
+            self.gru = nn.GRU(512, hidden_dim, num_layers, batch_first=True)
+            
+            # Output layers
+            self.classifier = nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim // 2),
+                nn.ReLU(),
+                nn.Dropout(0.3),
+                nn.Linear(hidden_dim // 2, num_classes)
+            )
+            
+            self.regressor = nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim // 2),
+                nn.ReLU(),
+                nn.Dropout(0.3),
+                nn.Linear(hidden_dim // 2, 4)  # protein, calories, carbs, fat
+            )
         
-        # GRU for sequential processing
-        self.gru = nn.GRU(512, hidden_dim, num_layers, batch_first=True)
-        
-        # Output layers
-        self.classifier = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(hidden_dim // 2, num_classes)
-        )
-        
-        self.regressor = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(hidden_dim // 2, 4)  # protein, calories, carbs, fat
-        )
-    
-    def forward(self, x, sequence_length=None):
-        batch_size = x.size(0)
-        
-        # CNN feature extraction
-        features = self.conv_layers(x)
-        features = features.view(batch_size, -1)  # Flatten to [batch_size, 512]
-        
-        # For single image input, create a sequence of length 1
-        if sequence_length is None:
-            # Reshape for GRU: [batch_size, seq_len=1, features]
-            features = features.unsqueeze(1)  # [batch_size, 1, 512]
-            gru_out, _ = self.gru(features)
-            features = gru_out.squeeze(1)  # [batch_size, hidden_dim]
-        else:
-            # Handle sequence input if needed
-            features = features.view(batch_size, sequence_length, -1)
-            gru_out, _ = self.gru(features)
-            features = gru_out[:, -1, :]  # Take last timestep
-        
-        # Outputs
-        classification = self.classifier(features)
-        nutritional_values = self.regressor(features)
-        
-        return classification, nutritional_values
+        def forward(self, x, sequence_length=None):
+            batch_size = x.size(0)
+            
+            # CNN feature extraction
+            features = self.conv_layers(x)
+            features = features.view(batch_size, -1)  # Flatten to [batch_size, 512]
+            
+            # For single image input, create a sequence of length 1
+            if sequence_length is None:
+                # Reshape for GRU: [batch_size, seq_len=1, features]
+                features = features.unsqueeze(1)  # [batch_size, 1, 512]
+                gru_out, _ = self.gru(features)
+                features = gru_out.squeeze(1)  # [batch_size, hidden_dim]
+            else:
+                # Handle sequence input if needed
+                features = features.view(batch_size, sequence_length, -1)
+                gru_out, _ = self.gru(features)
+                features = gru_out[:, -1, :]  # Take last timestep
+            
+            # Outputs
+            classification = self.classifier(features)
+            nutritional_values = self.regressor(features)
+            
+            return classification, nutritional_values
+else:
+    # Fallback when PyTorch is not available
+    class CNNGRUModel:
+        """Placeholder CNN-GRU model when PyTorch is not available"""
+        def __init__(self, *args, **kwargs):
+            logger.warning("PyTorch not available - CNNGRUModel is a placeholder")
 
 class ProteinOptimizer:
     """Main class for protein optimization and meal analysis"""
     
     def __init__(self):
-        self.model = CNNGRUModel()
+        if TORCH_AVAILABLE:
+            self.model = CNNGRUModel()
+        else:
+            self.model = None
+            logger.warning("PyTorch not available - model-based features will be disabled")
+        
         self.food_database = self._load_food_database()
         self.user_profiles = {}  # In production, use database
         self.meal_history = {}  # In production, use database
@@ -158,8 +180,15 @@ class ProteinOptimizer:
             # Configure Gemini API (you'll need to set this environment variable)
             api_key = os.getenv('GEMINI_API_KEY')
             if api_key:
-                genai.configure(api_key=api_key)
-                self.gemini_model = genai.GenerativeModel('gemini-2.5-flash')
+                if GEMINI_NEW_API:
+                    # New google.genai package API
+                    self.gemini_client = genai.Client(api_key=api_key)
+                    self.gemini_model = 'gemini-2.5-flash'
+                else:
+                    # Legacy google.generativeai package API
+                    genai.configure(api_key=api_key)
+                    self.gemini_model = genai.GenerativeModel('gemini-2.5-flash')
+                    self.gemini_client = None
                 self.use_gemini = True
                 logger.info("Gemini AI initialized successfully with gemini-2.5-flash")
             else:
@@ -169,65 +198,173 @@ class ProteinOptimizer:
             self.use_gemini = False
             logger.warning(f"Could not initialize Gemini AI: {e}, using fallback detection")
     
+    # Transient error substrings from the Gemini / gRPC layer
+    _GEMINI_TRANSIENT_ERRORS = (
+        'unavailable',
+        'resource_exhausted',
+        'quota',
+        'high demand',
+        'try again later',
+        'rate limit',
+        'deadline exceeded',
+        'internal error',
+        '429',
+        '503',
+        '500',
+    )
+
+    def _is_gemini_transient_error(self, exc: Exception) -> bool:
+        """Return True when the exception looks like a temporary Gemini service error."""
+        msg = str(exc).lower()
+        return any(marker in msg for marker in self._GEMINI_TRANSIENT_ERRORS)
+
+    def _pil_image_to_part(self, image: Image.Image):
+        """Convert a PIL Image to the correct Gemini API Part for the active SDK."""
+        buf = io.BytesIO()
+        # Always send as JPEG so the MIME type is unambiguous
+        rgb = image.convert('RGB') if image.mode != 'RGB' else image
+        rgb.save(buf, format='JPEG', quality=85)
+        image_bytes = buf.getvalue()
+
+        if GEMINI_NEW_API and genai_types is not None:
+            return genai_types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg')
+        else:
+            # Legacy SDK accepts PIL images or inline dicts
+            import google.generativeai as _genai_legacy
+            return {'mime_type': 'image/jpeg', 'data': image_bytes}
+
+    def _call_gemini(self, contents: list):
+        """Call Gemini API with support for both new and legacy packages.
+
+        PIL Image objects in `contents` are automatically converted to the
+        correct binary Part for whichever SDK is active.  This ensures the
+        image is actually transmitted instead of being silently ignored.
+
+        Raises the original exception on transient service errors so callers
+        can distinguish them from malformed-response errors.
+        """
+        # Normalise contents: replace PIL Images with SDK-native Part objects
+        normalised = []
+        for item in contents:
+            if isinstance(item, Image.Image):
+                normalised.append(self._pil_image_to_part(item))
+            else:
+                normalised.append(item)
+
+        try:
+            if GEMINI_NEW_API:
+                response = self.gemini_client.models.generate_content(
+                    model=self.gemini_model,
+                    contents=normalised
+                )
+                return response
+            else:
+                return self.gemini_model.generate_content(normalised)
+        except Exception as e:
+            if self._is_gemini_transient_error(e):
+                logger.warning(f"Gemini API transient error (will fall back to mock): {e}")
+            raise
+    
     def _load_food_database(self) -> Dict:
-        """Load food database with nutritional information"""
+        """Load food database with nutritional information - includes international cuisines"""
         return {
-            "chicken_breast": {
-                "protein": 31.0,  # grams per 100g
-                "calories": 165,
-                "carbs": 0.0,
-                "fat": 3.6,
-                "serving_sizes": ["100g", "150g", "200g"]
-            },
-            "salmon": {
-                "protein": 25.0,
-                "calories": 208,
-                "carbs": 0.0,
-                "fat": 12.0,
-                "serving_sizes": ["100g", "150g", "200g"]
-            },
-            "eggs": {
-                "protein": 13.0,
-                "calories": 155,
-                "carbs": 1.1,
-                "fat": 11.0,
-                "serving_sizes": ["1 egg", "2 eggs", "3 eggs"]
-            },
-            "greek_yogurt": {
-                "protein": 10.0,
-                "calories": 59,
-                "carbs": 3.6,
-                "fat": 0.4,
-                "serving_sizes": ["100g", "150g", "200g"]
-            },
-            "quinoa": {
-                "protein": 4.4,
-                "calories": 120,
-                "carbs": 22.0,
-                "fat": 1.9,
-                "serving_sizes": ["100g", "150g", "200g"]
-            },
-            "broccoli": {
-                "protein": 2.8,
-                "calories": 34,
-                "carbs": 7.0,
-                "fat": 0.4,
-                "serving_sizes": ["100g", "150g", "200g"]
-            },
-            "rice": {
-                "protein": 2.7,
-                "calories": 130,
-                "carbs": 28.0,
-                "fat": 0.3,
-                "serving_sizes": ["100g", "150g", "200g"]
-            },
-            "beans": {
-                "protein": 21.0,
-                "calories": 127,
-                "carbs": 23.0,
-                "fat": 0.5,
-                "serving_sizes": ["100g", "150g", "200g"]
-            }
+            # === WESTERN FOODS ===
+            "chicken_breast": {"protein": 31.0, "calories": 165, "carbs": 0.0, "fat": 3.6, "serving_sizes": ["100g", "150g", "200g"]},
+            "grilled_chicken_breast": {"protein": 31.0, "calories": 165, "carbs": 0.0, "fat": 3.6, "serving_sizes": ["100g", "150g", "200g"]},
+            "salmon": {"protein": 25.0, "calories": 208, "carbs": 0.0, "fat": 12.0, "serving_sizes": ["100g", "150g", "200g"]},
+            "eggs": {"protein": 13.0, "calories": 155, "carbs": 1.1, "fat": 11.0, "serving_sizes": ["1 egg", "2 eggs", "3 eggs"]},
+            "greek_yogurt": {"protein": 10.0, "calories": 59, "carbs": 3.6, "fat": 0.4, "serving_sizes": ["100g", "150g", "200g"]},
+            "quinoa": {"protein": 4.4, "calories": 120, "carbs": 22.0, "fat": 1.9, "serving_sizes": ["100g", "150g", "200g"]},
+            "broccoli": {"protein": 2.8, "calories": 34, "carbs": 7.0, "fat": 0.4, "serving_sizes": ["100g", "150g", "200g"]},
+            "rice": {"protein": 2.7, "calories": 130, "carbs": 28.0, "fat": 0.3, "serving_sizes": ["100g", "150g", "200g"]},
+            "beans": {"protein": 21.0, "calories": 127, "carbs": 23.0, "fat": 0.5, "serving_sizes": ["100g", "150g", "200g"]},
+            
+            # === INDIAN FOODS - South Indian ===
+            "dosa": {"protein": 2.6, "calories": 133, "carbs": 28.0, "fat": 1.2, "serving_sizes": ["1 dosa", "2 dosas"]},
+            "masala_dosa": {"protein": 4.5, "calories": 206, "carbs": 32.0, "fat": 7.0, "serving_sizes": ["1 dosa"]},
+            "plain_dosa": {"protein": 2.6, "calories": 133, "carbs": 28.0, "fat": 1.2, "serving_sizes": ["1 dosa"]},
+            "idli": {"protein": 2.0, "calories": 39, "carbs": 8.0, "fat": 0.1, "serving_sizes": ["1 idli", "2 idlis", "3 idlis"]},
+            "sambar": {"protein": 2.3, "calories": 65, "carbs": 9.0, "fat": 2.0, "serving_sizes": ["100ml", "150ml"]},
+            "coconut_chutney": {"protein": 2.0, "calories": 108, "carbs": 4.5, "fat": 9.5, "serving_sizes": ["30g", "50g"]},
+            "uttapam": {"protein": 3.5, "calories": 150, "carbs": 25.0, "fat": 4.0, "serving_sizes": ["1 uttapam"]},
+            "vada": {"protein": 5.0, "calories": 180, "carbs": 18.0, "fat": 10.0, "serving_sizes": ["1 vada", "2 vadas"]},
+            "medu_vada": {"protein": 5.0, "calories": 180, "carbs": 18.0, "fat": 10.0, "serving_sizes": ["1 vada"]},
+            "upma": {"protein": 3.2, "calories": 150, "carbs": 22.0, "fat": 5.5, "serving_sizes": ["100g", "150g"]},
+            "pongal": {"protein": 4.0, "calories": 145, "carbs": 24.0, "fat": 4.0, "serving_sizes": ["100g", "150g"]},
+            "rava_dosa": {"protein": 3.0, "calories": 165, "carbs": 26.0, "fat": 5.5, "serving_sizes": ["1 dosa"]},
+            "appam": {"protein": 2.5, "calories": 120, "carbs": 24.0, "fat": 1.5, "serving_sizes": ["1 appam"]},
+            
+            # === INDIAN FOODS - North Indian ===
+            "roti": {"protein": 3.0, "calories": 71, "carbs": 15.0, "fat": 0.4, "serving_sizes": ["1 roti", "2 rotis"]},
+            "chapati": {"protein": 3.0, "calories": 71, "carbs": 15.0, "fat": 0.4, "serving_sizes": ["1 chapati"]},
+            "naan": {"protein": 3.5, "calories": 130, "carbs": 22.0, "fat": 3.5, "serving_sizes": ["1 naan"]},
+            "paratha": {"protein": 4.0, "calories": 180, "carbs": 25.0, "fat": 7.0, "serving_sizes": ["1 paratha"]},
+            "aloo_paratha": {"protein": 5.0, "calories": 210, "carbs": 30.0, "fat": 8.0, "serving_sizes": ["1 paratha"]},
+            "paneer": {"protein": 18.0, "calories": 265, "carbs": 1.2, "fat": 21.0, "serving_sizes": ["100g", "150g"]},
+            "paneer_tikka": {"protein": 16.0, "calories": 250, "carbs": 5.0, "fat": 18.0, "serving_sizes": ["100g", "150g"]},
+            "palak_paneer": {"protein": 12.0, "calories": 220, "carbs": 8.0, "fat": 16.0, "serving_sizes": ["150g", "200g"]},
+            "butter_chicken": {"protein": 18.0, "calories": 250, "carbs": 10.0, "fat": 16.0, "serving_sizes": ["150g", "200g"]},
+            "chicken_tikka_masala": {"protein": 20.0, "calories": 240, "carbs": 8.0, "fat": 14.0, "serving_sizes": ["150g", "200g"]},
+            "dal": {"protein": 9.0, "calories": 120, "carbs": 20.0, "fat": 1.5, "serving_sizes": ["100g", "150g"]},
+            "dal_tadka": {"protein": 9.0, "calories": 130, "carbs": 18.0, "fat": 4.0, "serving_sizes": ["150g"]},
+            "dal_makhani": {"protein": 8.0, "calories": 180, "carbs": 22.0, "fat": 7.0, "serving_sizes": ["150g"]},
+            "rajma": {"protein": 8.5, "calories": 140, "carbs": 22.0, "fat": 2.5, "serving_sizes": ["150g"]},
+            "chole": {"protein": 9.0, "calories": 165, "carbs": 27.0, "fat": 3.0, "serving_sizes": ["150g"]},
+            "chana_masala": {"protein": 9.0, "calories": 165, "carbs": 27.0, "fat": 3.0, "serving_sizes": ["150g"]},
+            "biryani": {"protein": 12.0, "calories": 250, "carbs": 35.0, "fat": 8.0, "serving_sizes": ["200g", "250g"]},
+            "chicken_biryani": {"protein": 15.0, "calories": 270, "carbs": 32.0, "fat": 10.0, "serving_sizes": ["250g"]},
+            "vegetable_biryani": {"protein": 6.0, "calories": 200, "carbs": 38.0, "fat": 5.0, "serving_sizes": ["250g"]},
+            "pulao": {"protein": 5.0, "calories": 180, "carbs": 32.0, "fat": 4.0, "serving_sizes": ["150g", "200g"]},
+            "tandoori_chicken": {"protein": 28.0, "calories": 195, "carbs": 4.0, "fat": 8.0, "serving_sizes": ["150g", "200g"]},
+            "seekh_kebab": {"protein": 22.0, "calories": 230, "carbs": 5.0, "fat": 14.0, "serving_sizes": ["100g"]},
+            "korma": {"protein": 14.0, "calories": 280, "carbs": 12.0, "fat": 20.0, "serving_sizes": ["150g"]},
+            "aloo_gobi": {"protein": 3.0, "calories": 110, "carbs": 18.0, "fat": 4.0, "serving_sizes": ["150g"]},
+            "bhindi_masala": {"protein": 2.5, "calories": 95, "carbs": 12.0, "fat": 5.0, "serving_sizes": ["100g"]},
+            "baingan_bharta": {"protein": 2.0, "calories": 100, "carbs": 10.0, "fat": 6.0, "serving_sizes": ["100g"]},
+            "raita": {"protein": 3.0, "calories": 60, "carbs": 5.0, "fat": 3.0, "serving_sizes": ["100g"]},
+            "lassi": {"protein": 3.5, "calories": 110, "carbs": 18.0, "fat": 2.5, "serving_sizes": ["200ml"]},
+            "mango_lassi": {"protein": 3.0, "calories": 150, "carbs": 28.0, "fat": 2.5, "serving_sizes": ["200ml"]},
+            "kheer": {"protein": 4.0, "calories": 160, "carbs": 28.0, "fat": 4.0, "serving_sizes": ["100g"]},
+            "gulab_jamun": {"protein": 3.0, "calories": 150, "carbs": 25.0, "fat": 5.0, "serving_sizes": ["2 pieces"]},
+            "jalebi": {"protein": 1.5, "calories": 150, "carbs": 30.0, "fat": 4.0, "serving_sizes": ["50g"]},
+            "samosa": {"protein": 4.0, "calories": 260, "carbs": 30.0, "fat": 14.0, "serving_sizes": ["1 samosa"]},
+            "pakora": {"protein": 3.0, "calories": 175, "carbs": 18.0, "fat": 10.0, "serving_sizes": ["50g"]},
+            "puri": {"protein": 2.5, "calories": 125, "carbs": 18.0, "fat": 5.0, "serving_sizes": ["1 puri"]},
+            "bhatura": {"protein": 4.0, "calories": 200, "carbs": 28.0, "fat": 8.0, "serving_sizes": ["1 bhatura"]},
+            "poha": {"protein": 3.0, "calories": 130, "carbs": 25.0, "fat": 3.0, "serving_sizes": ["100g"]},
+            "dhokla": {"protein": 4.0, "calories": 120, "carbs": 20.0, "fat": 2.5, "serving_sizes": ["100g"]},
+            "khandvi": {"protein": 3.5, "calories": 100, "carbs": 15.0, "fat": 3.0, "serving_sizes": ["100g"]},
+            "thepla": {"protein": 4.0, "calories": 140, "carbs": 22.0, "fat": 4.5, "serving_sizes": ["1 thepla"]},
+            
+            # === CHINESE/ASIAN FOODS ===
+            "fried_rice": {"protein": 5.0, "calories": 180, "carbs": 30.0, "fat": 5.0, "serving_sizes": ["150g", "200g"]},
+            "noodles": {"protein": 5.0, "calories": 190, "carbs": 35.0, "fat": 4.0, "serving_sizes": ["150g", "200g"]},
+            "manchurian": {"protein": 6.0, "calories": 220, "carbs": 25.0, "fat": 12.0, "serving_sizes": ["150g"]},
+            "spring_roll": {"protein": 3.0, "calories": 150, "carbs": 20.0, "fat": 7.0, "serving_sizes": ["1 roll"]},
+            "momos": {"protein": 6.0, "calories": 140, "carbs": 18.0, "fat": 5.0, "serving_sizes": ["5 pieces"]},
+            "dim_sum": {"protein": 5.0, "calories": 130, "carbs": 15.0, "fat": 5.5, "serving_sizes": ["4 pieces"]},
+            "tofu": {"protein": 8.0, "calories": 76, "carbs": 2.0, "fat": 4.5, "serving_sizes": ["100g"]},
+            "sushi": {"protein": 7.0, "calories": 145, "carbs": 25.0, "fat": 2.0, "serving_sizes": ["6 pieces"]},
+            "ramen": {"protein": 12.0, "calories": 350, "carbs": 45.0, "fat": 12.0, "serving_sizes": ["400ml"]},
+            
+            # === MIDDLE EASTERN/MEDITERRANEAN ===
+            "hummus": {"protein": 8.0, "calories": 166, "carbs": 14.0, "fat": 10.0, "serving_sizes": ["100g"]},
+            "falafel": {"protein": 13.0, "calories": 333, "carbs": 32.0, "fat": 18.0, "serving_sizes": ["100g"]},
+            "shawarma": {"protein": 18.0, "calories": 275, "carbs": 15.0, "fat": 18.0, "serving_sizes": ["200g"]},
+            "kebab": {"protein": 20.0, "calories": 220, "carbs": 5.0, "fat": 12.0, "serving_sizes": ["100g"]},
+            "pita_bread": {"protein": 5.5, "calories": 165, "carbs": 33.0, "fat": 0.7, "serving_sizes": ["1 pita"]},
+            "tabbouleh": {"protein": 2.5, "calories": 85, "carbs": 15.0, "fat": 2.5, "serving_sizes": ["100g"]},
+            
+            # === MEXICAN ===
+            "tacos": {"protein": 10.0, "calories": 210, "carbs": 20.0, "fat": 10.0, "serving_sizes": ["2 tacos"]},
+            "burrito": {"protein": 15.0, "calories": 300, "carbs": 40.0, "fat": 10.0, "serving_sizes": ["1 burrito"]},
+            "quesadilla": {"protein": 12.0, "calories": 280, "carbs": 25.0, "fat": 15.0, "serving_sizes": ["1 quesadilla"]},
+            "guacamole": {"protein": 2.0, "calories": 160, "carbs": 8.5, "fat": 15.0, "serving_sizes": ["100g"]},
+            
+            # === THAI ===
+            "pad_thai": {"protein": 12.0, "calories": 270, "carbs": 35.0, "fat": 10.0, "serving_sizes": ["200g"]},
+            "green_curry": {"protein": 15.0, "calories": 220, "carbs": 10.0, "fat": 16.0, "serving_sizes": ["200g"]},
+            "tom_yum_soup": {"protein": 8.0, "calories": 100, "carbs": 8.0, "fat": 4.0, "serving_sizes": ["250ml"]},
         }
     
     def _load_model(self):
@@ -363,11 +500,162 @@ class ProteinOptimizer:
             
             return detected_foods
     
+    def _basic_food_check(self, image_path: str) -> Tuple[bool, str]:
+        """Basic OpenCV-based check to detect obvious non-food images.
+        
+        Uses face detection and color analysis to identify:
+        - Selfies/portraits (face detection)
+        - Pure scenery (blue sky, green landscapes - limited food colors)
+        - Obviously non-food images
+        
+        This is a PRE-FILTER before the main Gemini analysis.
+        Returns (is_likely_food, reason)
+        """
+        try:
+            # Load image with OpenCV
+            image = cv2.imread(image_path)
+            if image is None:
+                return True, "Could not read image for pre-filtering"
+            
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            
+            # 1. FACE DETECTION - Selfies/Portraits
+            # Use OpenCV's built-in cascade classifier for face detection
+            face_cascade_paths = [
+                cv2.data.haarcascades + 'haarcascade_frontalface_default.xml',
+                cv2.data.haarcascades + 'haarcascade_frontalface_alt.xml',
+            ]
+            
+            face_cascade = None
+            for cascade_path in face_cascade_paths:
+                if os.path.exists(cascade_path):
+                    face_cascade = cv2.CascadeClassifier(cascade_path)
+                    break
+            
+            if face_cascade is not None and not face_cascade.empty():
+                faces = face_cascade.detectMultiScale(
+                    gray, 
+                    scaleFactor=1.1, 
+                    minNeighbors=5, 
+                    minSize=(60, 60)  # Minimum face size
+                )
+                
+                if len(faces) > 0:
+                    # Calculate total face area
+                    total_face_area = sum(w * h for (x, y, w, h) in faces)
+                    image_area = image.shape[0] * image.shape[1]
+                    face_percentage = (total_face_area / image_area) * 100
+                    
+                    # If faces occupy significant portion of image, it's likely a selfie
+                    if face_percentage > 8 or len(faces) >= 2:
+                        logger.info(f"Face detection: {len(faces)} faces detected, {face_percentage:.1f}% of image")
+                        return False, f"This looks like a selfie or portrait (detected {len(faces)} face(s)). Please upload a photo of your meal instead."
+                    else:
+                        logger.info(f"Face detected but small ({face_percentage:.1f}%), allowing image")
+            
+            # 2. COLOR ANALYSIS - Scenery Detection
+            # Convert to HSV for better color analysis
+            hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+            
+            # Define color ranges for scenery (sky blue, grass green, etc.)
+            # Blue sky: H=100-130, S>50, V>100
+            sky_blue_lower = np.array([100, 50, 100])
+            sky_blue_upper = np.array([130, 255, 255])
+            sky_mask = cv2.inRange(hsv, sky_blue_lower, sky_blue_upper)
+            sky_percentage = (np.sum(sky_mask > 0) / (image.shape[0] * image.shape[1])) * 100
+            
+            # Green grass/trees: H=40-80, S>40, V>40
+            green_lower = np.array([40, 40, 40])
+            green_upper = np.array([80, 255, 255])
+            green_mask = cv2.inRange(hsv, green_lower, green_upper)
+            green_percentage = (np.sum(green_mask > 0) / (image.shape[0] * image.shape[1])) * 100
+            
+            # If image is predominantly sky blue and/or grass green, it's likely scenery
+            if sky_percentage > 35:
+                logger.info(f"Scenery detection: {sky_percentage:.1f}% sky blue")
+                return False, "This looks like a scenery/landscape photo. Please upload a photo of your meal instead."
+            
+            if green_percentage > 50:
+                # Check if it might be vegetables (smaller green portions are OK)
+                logger.info(f"Green detection: {green_percentage:.1f}% green - checking if vegetables...")
+                # If very high green with no other food colors, it's likely scenery
+                if green_percentage > 70 and sky_percentage > 15:
+                    return False, "This looks like an outdoor/nature photo. Please upload a photo of your meal instead."
+            
+            # 3. EDGE DENSITY CHECK - Food typically has more texture/edges than scenery
+            edges = cv2.Canny(gray, 50, 150)
+            edge_density = np.sum(edges > 0) / (image.shape[0] * image.shape[1])
+            
+            # Very smooth images with low edge density might be scenery or abstract images
+            if edge_density < 0.02 and (sky_percentage > 20 or green_percentage > 30):
+                logger.info(f"Low edge density ({edge_density:.3f}) with scenery colors")
+                return False, "This doesn't appear to be a food photo. Please upload a clear image of your meal."
+            
+            # 4. FOOD COLOR PRESENCE CHECK
+            # Common food colors: browns, reds, oranges, yellows, whites
+            # Brown (bread, meat, rice): H=10-30, S>30, V>30
+            brown_lower = np.array([10, 30, 30])
+            brown_upper = np.array([30, 255, 200])
+            brown_mask = cv2.inRange(hsv, brown_lower, brown_upper)
+            brown_percentage = (np.sum(brown_mask > 0) / (image.shape[0] * image.shape[1])) * 100
+            
+            # Red (tomatoes, meat, peppers): H=0-10 or 160-180, S>50, V>50
+            red_lower1 = np.array([0, 50, 50])
+            red_upper1 = np.array([10, 255, 255])
+            red_lower2 = np.array([160, 50, 50])
+            red_upper2 = np.array([180, 255, 255])
+            red_mask = cv2.inRange(hsv, red_lower1, red_upper1) | cv2.inRange(hsv, red_lower2, red_upper2)
+            red_percentage = (np.sum(red_mask > 0) / (image.shape[0] * image.shape[1])) * 100
+            
+            # Orange/Yellow (citrus, eggs, cheese): H=15-35, S>50, V>100
+            orange_lower = np.array([15, 50, 100])
+            orange_upper = np.array([35, 255, 255])
+            orange_mask = cv2.inRange(hsv, orange_lower, orange_upper)
+            orange_percentage = (np.sum(orange_mask > 0) / (image.shape[0] * image.shape[1])) * 100
+            
+            # White (rice, bread, dairy): H=0-180, S<30, V>200
+            white_lower = np.array([0, 0, 200])
+            white_upper = np.array([180, 30, 255])
+            white_mask = cv2.inRange(hsv, white_lower, white_upper)
+            white_percentage = (np.sum(white_mask > 0) / (image.shape[0] * image.shape[1])) * 100
+            
+            food_color_total = brown_percentage + red_percentage + orange_percentage + (green_percentage * 0.3)  # Green vegetables
+            
+            logger.info(f"Color analysis: brown={brown_percentage:.1f}%, red={red_percentage:.1f}%, orange={orange_percentage:.1f}%, green={green_percentage:.1f}%, white={white_percentage:.1f}%")
+            
+            # If no food-typical colors are present, might not be food
+            if food_color_total < 5 and white_percentage < 10 and green_percentage < 20:
+                logger.info(f"Low food color presence ({food_color_total:.1f}%)")
+                # Don't reject outright, but note it
+                return True, "Image analyzed - proceeding with food detection (low food color signals)"
+            
+            # Image passed all checks - likely food
+            return True, "Basic analysis: Image appears to contain food"
+            
+        except Exception as e:
+            logger.error(f"Basic food check error: {e}")
+            # On error, allow the image to proceed (conservative approach)
+            return True, f"Pre-filter check failed: {str(e)}, proceeding with analysis"
+    
     def _is_food_image(self, image_path: str) -> Tuple[bool, str]:
-        """Check if the image contains food using Gemini Vision API"""
+        """Check if the image contains food using Gemini Vision API with OpenCV fallback.
+        
+        This method detects non-food images like selfies, portraits, scenery, etc.
+        When Gemini is available, it uses AI-powered detection.
+        When Gemini is not available, it uses basic OpenCV-based heuristics.
+        """
+        # First, try basic OpenCV-based detection as a pre-filter
+        # This catches obvious non-food images even before calling Gemini
+        is_likely_food, cv_reason = self._basic_food_check(image_path)
+        
+        if not is_likely_food:
+            # OpenCV detected this is definitely NOT food (like a face/portrait)
+            logger.warning(f"OpenCV pre-filter rejected image: {cv_reason}")
+            return False, cv_reason
+        
         if not GEMINI_AVAILABLE or not self.use_gemini:
-            # Fallback: assume it's food if we can't verify
-            return True, "Cannot verify - Gemini not available"
+            # Fallback: use OpenCV-based analysis
+            return is_likely_food, cv_reason
             
         try:
             image = Image.open(image_path)
@@ -387,7 +675,7 @@ class ProteinOptimizer:
             Return is_food: false if the image shows people, faces, portraits, animals, objects, scenery, or anything that is NOT food.
             """
             
-            response = self.gemini_model.generate_content([validation_prompt, image])
+            response = self._call_gemini([validation_prompt, image])
             
             if response and response.text:
                 response_text = response.text.strip()
@@ -411,10 +699,17 @@ class ProteinOptimizer:
                 return is_food, f"{reason} - Detected: {detected}"
                 
         except Exception as e:
+            # If this is a transient Gemini service error, fall back to the
+            # OpenCV result rather than wrongly rejecting the image.
+            if self._is_gemini_transient_error(e):
+                logger.warning(f"Gemini unavailable during food validation, using OpenCV result: {e}")
+                self.use_gemini = False  # disable for this request cycle
+                return is_likely_food, cv_reason
             logger.error(f"Food validation error: {e}")
-            # On error, be conservative and reject to avoid false positives
-            return False, f"Validation failed: {str(e)}"
-        
+            # For non-transient errors fall back to OpenCV as well; we
+            # should never reject a valid food image due to an API outage.
+            return is_likely_food, f"Validation fallback (API error): {cv_reason}"
+
         return False, "Unable to validate image"
     
     def _detect_foods_with_gemini(self, image_path: str) -> List[FoodItem]:
@@ -437,27 +732,37 @@ class ProteinOptimizer:
             CRITICAL INSTRUCTIONS:
             
             1. FOOD IDENTIFICATION:
-               - Identify ALL visible food items (main dishes, sides, toppings, sauces)
-               - Use descriptive names with preparation method (e.g., "grilled_chicken_breast", "fried_french_fries", "cheese_pizza")
+               - Identify ALL visible food items (main dishes, sides, toppings, sauces, chutneys, accompaniments)
+               - Use descriptive names with preparation method (e.g., "grilled_chicken_breast", "masala_dosa", "idli_sambar")
                - Be specific about unhealthy items: if it's fried, breaded, fast food, or junk food, include that in the name
                - Confidence: 0.9-1.0 for clear items, 0.6-0.8 for partially visible, below 0.6 for uncertain
             
-            2. PORTION ESTIMATION (CRITICAL):
+            2. INTERNATIONAL CUISINE RECOGNITION (CRITICAL):
+               - INDIAN SOUTH: dosa, masala_dosa, idli, sambar, coconut_chutney, uttapam, medu_vada, upma, pongal, rava_dosa, appam
+               - INDIAN NORTH: roti, chapati, naan, paratha, aloo_paratha, paneer_tikka, palak_paneer, butter_chicken, dal_tadka, dal_makhani, rajma, chole, biryani, tandoori_chicken, samosa, pakora
+               - CHINESE/ASIAN: fried_rice, noodles, momos, spring_roll, manchurian, dim_sum, sushi, ramen, pad_thai
+               - MIDDLE EASTERN: hummus, falafel, shawarma, kebab, pita_bread
+               - MEXICAN: tacos, burrito, quesadilla, guacamole
+               - Always use the proper cuisine-specific name, NOT generic Western equivalents
+               
+            3. PORTION ESTIMATION (CRITICAL):
                - Use realistic visual portion sizes based on plate size and food density
-               - Typical portions: chicken breast (150-200g), burger (200-250g), pizza slice (120-150g), 
-                 rice/pasta (150-200g cooked), salad (100-150g), vegetables (80-120g)
+               - Typical portions: dosa (1 piece ~100-120g), idli (1 piece ~40g), roti (1 piece ~30g), biryani (200-300g)
+               - Western portions: chicken breast (150-200g), burger (200-250g), pizza slice (120-150g)
                - Account for actual visible amount, not standard servings
             
-            3. NUTRITIONAL CALCULATION (MUST BE ACCURATE):
+            4. NUTRITIONAL CALCULATION (MUST BE ACCURATE):
                - First determine per-100g values from your nutritional database
                - Then calculate TOTAL values based on estimated_grams: total = (per_100g * estimated_grams) / 100
                - Include ALL macros: protein, carbs (including sugars), fat (including saturated fat), fiber
-               - For composite dishes (pizza, burger), break down ingredients and sum their nutrition
+               - For composite dishes (biryani, dosa with sambar), break down ingredients and sum their nutrition
             
-            4. FOOD TYPE AWARENESS:
+            5. FOOD TYPE AWARENESS:
                - Junk/Fast Food: pizza, burgers, fries, chips, donuts, candy, soda → Use names like "cheese_pizza", "french_fries", "chocolate_donut"
                - Healthy Foods: grilled proteins, vegetables, whole grains → Use names like "grilled_salmon", "steamed_broccoli", "quinoa"
                - Preparation matters: "fried_chicken" vs "grilled_chicken", "white_rice" vs "brown_rice"
+               - Indian healthy: idli, dosa (fermented, lighter), dal, roti
+               - Indian rich: butter_chicken, dal_makhani, paratha (ghee-based)
             
             Return ONLY this JSON (no markdown, no extra text):
             {
@@ -499,11 +804,16 @@ class ProteinOptimizer:
             
             # Call Gemini Vision API
             try:
-                response = self.gemini_model.generate_content([prompt, image])
+                response = self._call_gemini([prompt, image])
                 logger.info(f"Gemini API response received: {response}")
             except Exception as api_error:
                 logger.error(f"Gemini API call failed: {api_error}")
                 logger.error(f"Error type: {type(api_error).__name__}")
+                if self._is_gemini_transient_error(api_error):
+                    # Disable Gemini for this session so subsequent calls
+                    # fall straight to mock detection without retrying.
+                    self.use_gemini = False
+                    logger.warning("Gemini disabled for this session due to service unavailability")
                 return []
             
             if response and response.text:
@@ -608,9 +918,9 @@ class ProteinOptimizer:
         """Enhanced mock food detection for testing (simulates Gemini-quality results)"""
         import random
         
-        # More comprehensive food pool with realistic nutritional data
+        # Comprehensive food pool with multi-cuisine support
         food_pool = [
-            # High-protein mains
+            # === WESTERN - High-protein mains ===
             {"name": "grilled_chicken_breast", "protein": 31.0, "calories": 165, "confidence": 0.92},
             {"name": "salmon_fillet", "protein": 25.4, "calories": 208, "confidence": 0.89},
             {"name": "lean_beef", "protein": 26.1, "calories": 250, "confidence": 0.85},
@@ -618,29 +928,68 @@ class ProteinOptimizer:
             {"name": "tuna_steak", "protein": 30.0, "calories": 184, "confidence": 0.91},
             {"name": "tofu_grilled", "protein": 15.7, "calories": 144, "confidence": 0.78},
             
-            # Protein sides
+            # === WESTERN - Protein sides ===
             {"name": "hard_boiled_egg", "protein": 13.0, "calories": 155, "confidence": 0.95},
             {"name": "greek_yogurt", "protein": 17.0, "calories": 100, "confidence": 0.87},
             {"name": "cottage_cheese", "protein": 11.1, "calories": 98, "confidence": 0.83},
             {"name": "lentils_cooked", "protein": 9.0, "calories": 116, "confidence": 0.80},
             
-            # Vegetables
+            # === INDIAN - South Indian ===
+            {"name": "dosa", "protein": 2.6, "calories": 133, "confidence": 0.92},
+            {"name": "masala_dosa", "protein": 4.5, "calories": 206, "confidence": 0.90},
+            {"name": "idli", "protein": 2.0, "calories": 39, "confidence": 0.93},
+            {"name": "sambar", "protein": 2.3, "calories": 65, "confidence": 0.88},
+            {"name": "coconut_chutney", "protein": 2.0, "calories": 108, "confidence": 0.85},
+            {"name": "uttapam", "protein": 3.5, "calories": 150, "confidence": 0.87},
+            {"name": "medu_vada", "protein": 5.0, "calories": 180, "confidence": 0.89},
+            {"name": "upma", "protein": 3.2, "calories": 150, "confidence": 0.86},
+            {"name": "pongal", "protein": 4.0, "calories": 145, "confidence": 0.84},
+            
+            # === INDIAN - North Indian ===
+            {"name": "roti", "protein": 3.0, "calories": 71, "confidence": 0.94},
+            {"name": "naan", "protein": 3.5, "calories": 130, "confidence": 0.91},
+            {"name": "paratha", "protein": 4.0, "calories": 180, "confidence": 0.88},
+            {"name": "aloo_paratha", "protein": 5.0, "calories": 210, "confidence": 0.87},
+            {"name": "paneer_tikka", "protein": 16.0, "calories": 250, "confidence": 0.89},
+            {"name": "palak_paneer", "protein": 12.0, "calories": 220, "confidence": 0.88},
+            {"name": "butter_chicken", "protein": 18.0, "calories": 250, "confidence": 0.92},
+            {"name": "chicken_tikka_masala", "protein": 20.0, "calories": 240, "confidence": 0.90},
+            {"name": "dal_tadka", "protein": 9.0, "calories": 130, "confidence": 0.89},
+            {"name": "dal_makhani", "protein": 8.0, "calories": 180, "confidence": 0.87},
+            {"name": "rajma", "protein": 8.5, "calories": 140, "confidence": 0.86},
+            {"name": "chole", "protein": 9.0, "calories": 165, "confidence": 0.88},
+            {"name": "chicken_biryani", "protein": 15.0, "calories": 270, "confidence": 0.93},
+            {"name": "vegetable_biryani", "protein": 6.0, "calories": 200, "confidence": 0.87},
+            {"name": "tandoori_chicken", "protein": 28.0, "calories": 195, "confidence": 0.91},
+            {"name": "samosa", "protein": 4.0, "calories": 260, "confidence": 0.92},
+            {"name": "pakora", "protein": 3.0, "calories": 175, "confidence": 0.85},
+            {"name": "poha", "protein": 3.0, "calories": 130, "confidence": 0.88},
+            {"name": "dhokla", "protein": 4.0, "calories": 120, "confidence": 0.84},
+            
+            # === CHINESE/ASIAN ===
+            {"name": "fried_rice", "protein": 5.0, "calories": 180, "confidence": 0.90},
+            {"name": "noodles", "protein": 5.0, "calories": 190, "confidence": 0.88},
+            {"name": "momos", "protein": 6.0, "calories": 140, "confidence": 0.87},
+            {"name": "spring_roll", "protein": 3.0, "calories": 150, "confidence": 0.85},
+            
+            # === VEGETABLES ===
             {"name": "steamed_broccoli", "protein": 2.8, "calories": 34, "confidence": 0.93},
             {"name": "roasted_asparagus", "protein": 2.2, "calories": 27, "confidence": 0.85},
             {"name": "spinach_sauteed", "protein": 2.9, "calories": 23, "confidence": 0.82},
             {"name": "bell_peppers", "protein": 1.0, "calories": 31, "confidence": 0.88},
-            {"name": "green_beans", "protein": 1.8, "calories": 35, "confidence": 0.84},
+            {"name": "aloo_gobi", "protein": 3.0, "calories": 110, "confidence": 0.86},
+            {"name": "bhindi_masala", "protein": 2.5, "calories": 95, "confidence": 0.83},
             
-            # Healthy carbs
+            # === HEALTHY CARBS ===
             {"name": "quinoa_cooked", "protein": 4.4, "calories": 120, "confidence": 0.76},
             {"name": "brown_rice", "protein": 2.6, "calories": 112, "confidence": 0.81},
+            {"name": "basmati_rice", "protein": 2.7, "calories": 130, "confidence": 0.89},
             {"name": "sweet_potato", "protein": 2.0, "calories": 103, "confidence": 0.86},
-            {"name": "oats", "protein": 2.4, "calories": 68, "confidence": 0.79},
             
-            # Healthy fats
+            # === HEALTHY FATS ===
             {"name": "avocado_sliced", "protein": 2.0, "calories": 160, "confidence": 0.91},
             {"name": "almonds", "protein": 21.2, "calories": 579, "confidence": 0.73},
-            {"name": "olive_oil_drizzle", "protein": 0.0, "calories": 40, "confidence": 0.77},
+            {"name": "raita", "protein": 3.0, "calories": 60, "confidence": 0.87},
         ]
         
         # Randomly select 2-5 foods to simulate realistic meal detection

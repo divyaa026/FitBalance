@@ -21,6 +21,7 @@ import {
 } from "recharts";
 
 export default function Burnout() {
+  const [age, setAge] = useState(30);
   const [workoutFrequency, setWorkoutFrequency] = useState(4);
   const [sleepHours, setSleepHours] = useState(7.5);
   const [stressLevel, setStressLevel] = useState(5);
@@ -34,6 +35,7 @@ export default function Burnout() {
     try {
       await analyzeBurnout({
         user_id: "123",
+        age,
         workout_frequency: workoutFrequency,
         sleep_hours: sleepHours,
         stress_level: stressLevel,
@@ -108,6 +110,22 @@ export default function Burnout() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
+            {/* Age */}
+            <div className="space-y-2">
+              <Label>Age: {age}</Label>
+              <Slider
+                value={[age]}
+                onValueChange={(value) => setAge(value[0])}
+                min={13}
+                max={80}
+                step={1}
+                className="w-full"
+              />
+              <p className="text-xs text-muted-foreground">
+                Your age helps personalize burnout risk prediction
+              </p>
+            </div>
+
             {/* Workout Frequency */}
             <div className="space-y-2">
               <Label>Workouts Per Week: {workoutFrequency}</Label>

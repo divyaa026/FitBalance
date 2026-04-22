@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import Home from "./pages/Home";
 import Biomechanics from "./pages/Biomechanics";
+import LiveBiomechanics from "./pages/LiveBiomechanics";
 import Nutrition from "./pages/Nutrition";
 import Burnout from "./pages/Burnout";
 import Profile from "./pages/Profile";
@@ -26,6 +27,7 @@ const App = () => (
           <Route path="/" element={<Home />} />
           <Route element={<Layout />}>
             <Route path="/biomechanics" element={<Biomechanics />} />
+            <Route path="/biomechanics/live" element={<LiveBiomechanics />} />
             <Route path="/nutrition" element={<Nutrition />} />
             <Route path="/burnout" element={<Burnout />} />
             <Route path="/profile" element={<Profile />} />

@@ -74,11 +74,30 @@ class BurnoutPredictor:
     def _load_models(self):
         """Load pre-trained Cox PH model"""
         try:
-            model_path = os.path.join(os.path.dirname(__file__), '..', '..', 'ml', 'burnout', 'cox_model.pkl')
-            with open(model_path, 'rb') as f:
-                self.cph_model = pickle.load(f)
+            # Try multiple possible paths
+            possible_paths = [
+                os.path.join(os.path.dirname(__file__), '..', '..', 'ml', 'burnout', 'models', 'cox_ph_model.pkl'),
+                os.path.join(os.path.dirname(__file__), '..', '..', 'ml', 'burnout', 'cox_ph_model.pkl'),
+                os.path.join(os.path.dirname(__file__), '..', '..', 'ml', 'burnout', 'models', 'cox_model.pkl'),
+                os.path.join(os.path.dirname(__file__), '..', '..', 'ml', 'burnout', 'cox_model.pkl'),
+            ]
             
-            logger.info("[SUCCESS] Burnout Cox model loaded successfully")
+            model_loaded = False
+            for model_path in possible_paths:
+                if os.path.exists(model_path):
+                    try:
+                        with open(model_path, 'rb') as f:
+                            self.cph_model = pickle.load(f)
+                        logger.info(f"[SUCCESS] Burnout Cox model loaded from: {model_path}")
+                        model_loaded = True
+                        break
+                    except Exception as e:
+                        logger.warning(f"Could not load model from {model_path}: {e}")
+                        continue
+            
+            if not model_loaded:
+                raise FileNotFoundError("No valid Cox model found")
+                
         except Exception as e:
             logger.error(f"[ERROR] Could not load Cox model: {e}")
             self._create_mock_models()  # Fallback
@@ -148,11 +167,14 @@ class BurnoutPredictor:
         )
     
     async def analyze_risk(self, user_id: str, workout_frequency: int, sleep_hours: float,
-                          stress_level: int, recovery_time: int, performance_trend: str) -> BurnoutAnalysis:
+                          stress_level: int, recovery_time: int, performance_trend: str,
+                          age: Optional[int] = None) -> BurnoutAnalysis:
         """Analyze burnout risk based on user metrics"""
         try:
             # Get user profile
             user_profile = self._get_user_profile(user_id)
+            if age is not None:
+                user_profile['age'] = age
             
             # Create risk factors object
             risk_factors = BurnoutRiskFactors(
@@ -221,7 +243,7 @@ class BurnoutPredictor:
         return self.user_data[user_id]
     
     def _calculate_risk_score(self, risk_factors: BurnoutRiskFactors) -> float:
-        """Calculate burnout risk score using real Cox model"""
+        """Calculate burnout risk score using a combination of Cox model and heuristics"""
         try:
             # Map training_intensity string to model format
             intensity_map = {
@@ -246,60 +268,73 @@ class BurnoutPredictor:
                 training_intensity=intensity_map.get(risk_factors.training_intensity, 'moderate')
             )
             
-            # Convert risk score to 0-100 scale
-            # Risk score from Cox model is relative hazard (1.0 = average)
-            # Convert to percentage: <0.5 = low, 0.5-1.5 = medium, 1.5-3.0 = high, >3.0 = critical
-            risk_score = result['risk_score']
-            if risk_score < 0.5:
-                return 20.0  # Low risk
-            elif risk_score < 1.5:
-                return 20.0 + (risk_score - 0.5) * 60.0  # Medium risk (20-80)
-            elif risk_score < 3.0:
-                return 80.0 + (risk_score - 1.5) * 13.33  # High risk (80-100)
-            else:
-                return 100.0  # Critical risk
+            # Use survival probability as a better indicator
+            # Higher survival = lower risk
+            survival_prob = result['survival_probability_1yr']
+            # Convert: 0.99+ survival = low risk (~10-25), 0.90 survival = high risk (~75-85)
+            cox_score = (1.0 - survival_prob) * 500  # Scale: 0.99 survival = 5, 0.90 = 50
+            
+            # Calculate heuristic score based on input factors
+            heuristic_score = self._calculate_heuristic_score(risk_factors)
+            
+            # Blend Cox model score with heuristic (30% Cox, 70% heuristic for better responsiveness)
+            final_score = cox_score * 0.3 + heuristic_score * 0.7
+            
+            logger.info(f"Burnout score calculation: cox={cox_score:.1f}, heuristic={heuristic_score:.1f}, final={final_score:.1f}")
+            
+            return min(100.0, max(0.0, final_score))
             
         except Exception as e:
             logger.error(f"Risk score calculation error: {e}")
-            # Fallback to simple calculation
-            score = 0.0
-            
-            # Workout frequency (0-25 points)
-            if risk_factors.workout_frequency >= 6:
-                score += 25
-            elif risk_factors.workout_frequency >= 4:
-                score += 15
-            elif risk_factors.workout_frequency >= 2:
-                score += 5
-            
-            # Sleep hours (0-20 points)
-            if risk_factors.sleep_hours < 6:
-                score += 20
-            elif risk_factors.sleep_hours < 7:
-                score += 15
-            elif risk_factors.sleep_hours < 8:
-                score += 10
-            
-            # Stress level (0-25 points)
-            score += risk_factors.stress_level * 2.5
-            
-            # Recovery time (0-15 points)
-            if risk_factors.recovery_time <= 1:
-                score += 15
-            elif risk_factors.recovery_time <= 2:
-                score += 10
-            elif risk_factors.recovery_time <= 3:
-                score += 5
-            
-            # Performance trend (0-15 points)
-            if risk_factors.performance_trend == 'declining':
-                score += 15
-            elif risk_factors.performance_trend == 'stable':
-                score += 8
-            elif risk_factors.performance_trend == 'improving':
-                score += 2
-            
-            return min(100.0, score)
+            # Fallback to heuristic calculation only
+            return self._calculate_heuristic_score(risk_factors)
+    
+    def _calculate_heuristic_score(self, risk_factors: BurnoutRiskFactors) -> float:
+        """Calculate burnout risk using heuristic rules"""
+        score = 0.0
+        
+        # Workout frequency (0-20 points) - overtraining risk
+        if risk_factors.workout_frequency >= 7:
+            score += 20
+        elif risk_factors.workout_frequency >= 6:
+            score += 15
+        elif risk_factors.workout_frequency >= 5:
+            score += 10
+        elif risk_factors.workout_frequency >= 4:
+            score += 5
+        # 3 or fewer workouts = low risk, adds 0
+        
+        # Sleep hours (0-25 points) - major factor
+        if risk_factors.sleep_hours < 5:
+            score += 25
+        elif risk_factors.sleep_hours < 6:
+            score += 20
+        elif risk_factors.sleep_hours < 7:
+            score += 12
+        elif risk_factors.sleep_hours < 7.5:
+            score += 5
+        # 7.5+ hours = good sleep, adds 0
+        
+        # Stress level (0-30 points) - major factor (scale 1-10)
+        score += max(0, (risk_factors.stress_level - 3) * 4.3)  # 3=0, 10=30
+        
+        # Recovery time (0-15 points)
+        if risk_factors.recovery_time <= 1:
+            score += 15
+        elif risk_factors.recovery_time <= 2:
+            score += 10
+        elif risk_factors.recovery_time <= 3:
+            score += 5
+        # 4+ days recovery = good, adds 0
+        
+        # Performance trend (0-10 points)
+        if risk_factors.performance_trend == 'declining':
+            score += 10
+        elif risk_factors.performance_trend == 'stable':
+            score += 3
+        # improving = 0
+        
+        return min(100.0, score)
     
     def _determine_risk_level(self, risk_score: float) -> str:
         """Determine risk level based on score"""
@@ -504,7 +539,8 @@ class BurnoutPredictor:
             'sleep_hours': risk_factors.sleep_hours,
             'stress_level': risk_factors.stress_level,
             'recovery_time': risk_factors.recovery_time,
-            'performance_trend': risk_factors.performance_trend
+            'performance_trend': risk_factors.performance_trend,
+            'age': risk_factors.age
         }
         
         self.user_data[user_id]['risk_history'].append(risk_data)

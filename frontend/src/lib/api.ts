@@ -53,6 +53,9 @@ export interface NutritionAnalysis {
   meal_quality_score: number;
   recommendations: string[];
   shap_explanation?: string;
+  analysis_method?: string;  // 'real_nutrition_model' | 'mock_fallback' | 'mock_only'
+  protein_deficit?: number;
+  nutritional_balance?: Record<string, number>;
 }
 
 export interface BurnoutAnalysis {
@@ -195,12 +198,14 @@ class FitBalanceAPI {
     sleepHours: number,
     stressLevel: number,
     recoveryTime: number,
-    performanceTrend: string = 'stable'
+    performanceTrend: string = 'stable',
+    age: number = 30
   ): Promise<BurnoutAnalysis> {
     return this.request('/burnout/analyze', {
       method: 'POST',
       body: JSON.stringify({
         user_id: userId,
+        age,
         workout_frequency: workoutFrequency,
         sleep_hours: sleepHours,
         stress_level: stressLevel,

@@ -1,14 +1,15 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
-from typing import List, Optional
+from typing import List, Optional, Dict
 import logging
 import json
 import time
 import sys
 from pathlib import Path
+from dataclasses import asdict
 
 # Add the backend directory to Python path
 backend_path = Path(__file__).parent.parent
@@ -24,9 +25,43 @@ from modules.burnout import BurnoutPredictor
 from modules.nutrition import ProteinOptimizer
 from modules.biomechanics import BiomechanicsCoach
 
+# Import realtime biomechanics module (MediaPipe-based)
+from modules.realtime_biomechanics_mediapipe import get_analyzer, RealtimeAnalysisResult
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+# ==================== WebSocket Connection Manager ====================
+class ConnectionManager:
+    """Manages WebSocket connections for real-time analysis"""
+    
+    def __init__(self):
+        self.active_connections: Dict[str, WebSocket] = {}
+    
+    async def connect(self, websocket: WebSocket, user_id: str):
+        await websocket.accept()
+        self.active_connections[user_id] = websocket
+        logger.info(f"WebSocket connected: {user_id}")
+    
+    def disconnect(self, user_id: str):
+        if user_id in self.active_connections:
+            del self.active_connections[user_id]
+            logger.info(f"WebSocket disconnected: {user_id}")
+    
+    async def send_json(self, user_id: str, data: dict):
+        if user_id in self.active_connections:
+            await self.active_connections[user_id].send_json(data)
+    
+    async def broadcast(self, data: dict):
+        for connection in self.active_connections.values():
+            await connection.send_json(data)
+
+
+# Global connection manager
+ws_manager = ConnectionManager()
+
 
 app = FastAPI(
     title="FitBalance AI Fitness Platform",
@@ -123,9 +158,14 @@ class MockProteinOptimizer:
         }
 
 class MockBurnoutPredictor:
-    async def analyze_risk(self, user_id, workout_frequency, sleep_hours, stress_level, recovery_time, performance_trend):
+    async def analyze_risk(self, user_id, workout_frequency, sleep_hours, stress_level, recovery_time, performance_trend, age=None):
         # Calculate mock risk score
+        effective_age = age if age is not None else 30
         risk_score = (stress_level * 10) + (10 - sleep_hours) * 5 + (7 - workout_frequency) * 3
+        if effective_age < 22:
+            risk_score += 4
+        elif effective_age > 50:
+            risk_score += 2
         risk_score = min(max(risk_score, 0), 100)
         
         return {
@@ -222,6 +262,7 @@ async def analyze_biomechanics(
         result = await biomechanics_coach.analyze_movement(
             video_file, exercise_type, user_id
         )
+        pose_backend = biomechanics_coach.get_pose_backend_name() if hasattr(biomechanics_coach, "get_pose_backend_name") else "Unknown"
         
         # Check if valid exercise was detected
         if not result.is_valid_exercise:
@@ -229,15 +270,15 @@ async def analyze_biomechanics(
                 "is_valid_exercise": False,
                 "error_message": result.error_message,
                 "exercise_type": result.exercise_type,
-                "form_score": 0,
-                "risk_factors": [],
-                "recommendations": ["Please upload a video showing a person performing an exercise."],
+                "form_score": result.form_score,
+                "risk_factors": result.risk_factors,
+                "recommendations": result.recommendations if result.recommendations else ["Please upload a video showing a person performing the selected exercise."],
                 "joint_angles": [],
                 "torques": [],
                 "heatmap_data": {},
                 "form_errors": [],
                 "user_id": user_id,
-                "analysis_method": "GNN-LSTM with MediaPipe pose detection"
+                "analysis_method": f"GNN-LSTM with {pose_backend} pose detection"
             }
         
         # Convert BiomechanicsAnalysis to dict for JSON response
@@ -280,7 +321,7 @@ async def analyze_biomechanics(
                 for err in (result.form_errors or [])
             ],
             "user_id": user_id,
-            "analysis_method": "GNN-LSTM with MediaPipe pose detection"
+            "analysis_method": f"GNN-LSTM with {pose_backend} pose detection"
         }
     except Exception as e:
         logger.error(f"Biomechanics analysis error: {str(e)}", exc_info=True)
@@ -335,7 +376,7 @@ async def analyze_meal_photo(
                 )
                 
                 # Convert MealAnalysis to dict for JSON response
-                return {
+                result = {
                     "total_protein": meal_analysis.total_protein,
                     "total_calories": meal_analysis.total_calories,
                     "detected_foods": [
@@ -355,11 +396,30 @@ async def analyze_meal_photo(
                     "user_id": user_id,
                     "analysis_method": "real_nutrition_model"
                 }
+                
+                # Note: Meal is already logged in protein_optimizer.analyze_meal() via _store_meal_data()
+                # No need to log again here to avoid duplicates
+                
+                return result
             except ValueError as validation_error:
-                # Image validation failed (not a food image)
+                # Image validation failed (not a food image).
+                # Guard against transient Gemini API errors surfaced as ValueError.
+                error_msg = str(validation_error).lower()
+                is_api_outage = any(m in error_msg for m in (
+                    'unavailable', 'quota', 'high demand', 'try again', 'rate limit'
+                ))
+                if is_api_outage:
+                    # AI service is temporarily down — fall through to mock analysis
+                    logger.warning(f"Gemini service error surfaced as ValueError, falling through to mock: {validation_error}")
+                    mock_optimizer = MockProteinOptimizer()
+                    result = await mock_optimizer.analyze_meal(meal_photo, user_id, dietary_restrictions_list)
+                    result["analysis_method"] = "mock_fallback"
+                    result["fallback_reason"] = "AI meal analysis temporarily unavailable"
+                    return result
+                # Genuine rejection (non-food image)
                 logger.warning(f"Image validation failed: {validation_error}")
                 raise HTTPException(
-                    status_code=400, 
+                    status_code=400,
                     detail=str(validation_error)
                 )
             except Exception as real_error:
@@ -369,12 +429,44 @@ async def analyze_meal_photo(
                 result = await mock_optimizer.analyze_meal(meal_photo, user_id, dietary_restrictions_list)
                 result["analysis_method"] = "mock_fallback"
                 result["fallback_reason"] = str(real_error)
+                
+                # Log mock meal to history
+                try:
+                    user_id_int = int(user_id) if user_id.isdigit() else hash(user_id) % 10000
+                    detected_foods_dict = {f["name"]: f.get("serving_size", "100g") for f in result.get("detected_foods", [])}
+                    nutrition_db.log_meal(
+                        user_id=user_id_int,
+                        image_path=meal_photo.filename or "uploaded_meal",
+                        detected_foods=detected_foods_dict,
+                        total_protein=result.get("total_protein", 0),
+                        total_calories=result.get("total_calories", 0),
+                        confidence=0.7
+                    )
+                except Exception as log_err:
+                    logger.warning(f"Failed to log meal: {log_err}")
+                
                 return result
         else:
             # Use mock implementation
             mock_optimizer = MockProteinOptimizer()
             result = await mock_optimizer.analyze_meal(meal_photo, user_id, dietary_restrictions_list)
             result["analysis_method"] = "mock_only"
+            
+            # Log mock meal to history
+            try:
+                user_id_int = int(user_id) if user_id.isdigit() else hash(user_id) % 10000
+                detected_foods_dict = {f["name"]: f.get("serving_size", "100g") for f in result.get("detected_foods", [])}
+                nutrition_db.log_meal(
+                    user_id=user_id_int,
+                    image_path=meal_photo.filename or "uploaded_meal",
+                    detected_foods=detected_foods_dict,
+                    total_protein=result.get("total_protein", 0),
+                    total_calories=result.get("total_calories", 0),
+                    confidence=0.7
+                )
+            except Exception as log_err:
+                logger.warning(f"Failed to log meal: {log_err}")
+            
             return result
             
     except HTTPException:
@@ -487,6 +579,7 @@ class BurnoutAnalysisRequest(BaseModel):
     stress_level: int  # 1-10 scale
     recovery_time: int  # days
     performance_trend: str = "stable"  # improving, stable, declining
+    age: int = 30
 
 @app.post("/burnout/analyze")
 async def analyze_burnout_risk(request: BurnoutAnalysisRequest):
@@ -494,7 +587,8 @@ async def analyze_burnout_risk(request: BurnoutAnalysisRequest):
     try:
         risk_analysis = await burnout_predictor.analyze_risk(
             request.user_id, request.workout_frequency, request.sleep_hours, 
-            request.stress_level, request.recovery_time, request.performance_trend
+            request.stress_level, request.recovery_time, request.performance_trend,
+            request.age
         )
         return risk_analysis
     except Exception as e:
@@ -520,6 +614,100 @@ async def get_burnout_recommendations(user_id: str):
     except Exception as e:
         logger.error(f"Burnout recommendations error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Real-time Biomechanics WebSocket ====================
+@app.websocket("/biomechanics/realtime/{user_id}")
+async def websocket_realtime_biomechanics(websocket: WebSocket, user_id: str):
+    """
+    WebSocket endpoint for real-time biomechanics analysis.
+    
+    Client sends JSON:
+    {
+        "frame": "base64_encoded_jpeg_frame",
+        "exercise_type": "squat"
+    }
+    
+    Server responds with:
+    {
+        "form_score": 85.2,
+        "feedback": "Keep knees aligned",
+        "keypoints": [...],
+        "issues": [...],
+        "joint_angles": {...},
+        "processing_time_ms": 45.2
+    }
+    """
+    await ws_manager.connect(websocket, user_id)
+    analyzer = get_analyzer()
+    
+    try:
+        while True:
+            # Receive frame data
+            data = await websocket.receive_json()
+            
+            frame_data = data.get("frame", "")
+            exercise_type = data.get("exercise_type", "squat")
+            
+            if not frame_data:
+                await websocket.send_json({"error": "No frame data received"})
+                continue
+            
+            # Process frame
+            result = analyzer.process_frame(frame_data, exercise_type, user_id)
+            
+            if result is None:
+                await websocket.send_json({
+                    "error": "Frame processing failed",
+                    "form_score": 0,
+                    "feedback": "Camera error",
+                    "keypoints": [],
+                    "issues": [],
+                    "joint_angles": {},
+                    "processing_time_ms": 0,
+                    "pose_quality": {"type": "NONE", "coverage": 0, "missing_joints": [], "message": "Processing failed", "avg_confidence": 0},
+                    "movement_state": "STATIC",
+                    "reps": 0,
+                    "should_speak": False
+                })
+                continue
+            
+            # Send result back (include all new enhanced fields)
+            await websocket.send_json({
+                "form_score": result.form_score,
+                "feedback": result.feedback,
+                "keypoints": result.keypoints,
+                "issues": result.issues,
+                "joint_angles": result.joint_angles,
+                "processing_time_ms": result.processing_time_ms,
+                # New enhanced fields
+                "pose_quality": result.pose_quality,
+                "movement_state": result.movement_state,
+                "reps": result.reps,
+                "correct_reps": result.correct_reps,
+                "incorrect_reps": result.incorrect_reps,
+                "should_speak": result.should_speak,
+                "processed_frame": result.processed_frame
+            })
+            
+    except WebSocketDisconnect:
+        ws_manager.disconnect(user_id)
+        logger.info(f"WebSocket client {user_id} disconnected")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        ws_manager.disconnect(user_id)
+
+
+@app.get("/biomechanics/realtime/status")
+async def realtime_status():
+    """Check if realtime analysis is available"""
+    analyzer = get_analyzer()
+    return {
+        "available": analyzer.yolo_model is not None,
+        "device": str(analyzer.device),
+        "active_connections": len(ws_manager.active_connections)
+    }
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
