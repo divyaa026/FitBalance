@@ -402,46 +402,17 @@ async def analyze_meal_photo(
                 
                 return result
             except ValueError as validation_error:
-                # Genuine rejection: non-food image or no food identified.
-                # ValueError is only raised for user-facing rejections — return 400.
+                # Genuine rejection: non-food image or no food identified → 400
                 logger.warning(f"Image rejected: {validation_error}")
+                raise HTTPException(status_code=400, detail=str(validation_error))
+            except (RuntimeError, Exception) as service_error:
+                # AI service failure — do NOT fall back to random mock food names.
+                # Return a clear 503 so the client can show a useful message.
+                logger.error(f"Food analysis service error: {service_error}")
                 raise HTTPException(
-                    status_code=400,
-                    detail=str(validation_error)
+                    status_code=503,
+                    detail="Food analysis is temporarily unavailable. Please try again in a moment."
                 )
-            except RuntimeError as service_error:
-                # AI service temporarily unavailable — fall back to mock so the
-                # app stays usable, but tell the client it's a degraded response.
-                logger.warning(f"AI service error, using mock fallback: {service_error}")
-                mock_optimizer = MockProteinOptimizer()
-                result = await mock_optimizer.analyze_meal(meal_photo, user_id, dietary_restrictions_list)
-                result["analysis_method"] = "mock_fallback"
-                result["fallback_reason"] = str(service_error)
-                return result
-            except Exception as real_error:
-                logger.error(f"Real nutrition analysis failed: {real_error}")
-                # Fallback to mock analysis
-                mock_optimizer = MockProteinOptimizer()
-                result = await mock_optimizer.analyze_meal(meal_photo, user_id, dietary_restrictions_list)
-                result["analysis_method"] = "mock_fallback"
-                result["fallback_reason"] = str(real_error)
-                
-                # Log mock meal to history
-                try:
-                    user_id_int = int(user_id) if user_id.isdigit() else hash(user_id) % 10000
-                    detected_foods_dict = {f["name"]: f.get("serving_size", "100g") for f in result.get("detected_foods", [])}
-                    nutrition_db.log_meal(
-                        user_id=user_id_int,
-                        image_path=meal_photo.filename or "uploaded_meal",
-                        detected_foods=detected_foods_dict,
-                        total_protein=result.get("total_protein", 0),
-                        total_calories=result.get("total_calories", 0),
-                        confidence=0.7
-                    )
-                except Exception as log_err:
-                    logger.warning(f"Failed to log meal: {log_err}")
-                
-                return result
         else:
             # Use mock implementation
             mock_optimizer = MockProteinOptimizer()

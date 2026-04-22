@@ -414,19 +414,8 @@ class ProteinOptimizer:
                 image_path = self._preprocess_uploaded_image(content, tmp_file.name)
             
             logger.info(f"Image preprocessed and saved to: {image_path}")
-            
-            # First, validate if the image contains food
-            is_food, validation_reason = self._is_food_image(image_path)
-            
-            if not is_food:
-                # Clean up and raise error
-                os.unlink(image_path)
-                logger.warning(f"Non-food image rejected: {validation_reason}")
-                raise ValueError(f"This image does not appear to contain food. {validation_reason}")
-            
-            logger.info(f"Image validated as food: {validation_reason}")
-            
-            # Process image
+
+            # Detect foods (Gemini handles food/non-food validation in the same call)
             detected_foods = self._detect_foods(image_path)
             
             # Calculate nutritional content
@@ -491,8 +480,6 @@ class ProteinOptimizer:
         logger.info(f"Gemini detected {len(detected_foods)} food item(s)")
         return detected_foods
 
-            return detected_foods
-    
     def _basic_food_check(self, image_path: str) -> Tuple[bool, str]:
         """Basic OpenCV-based check to detect obvious non-food images.
         
@@ -708,6 +695,9 @@ class ProteinOptimizer:
     def _detect_foods_with_gemini(self, image_path: str) -> List[FoodItem]:
         """Use Gemini Vision API to detect and analyse foods in the image.
 
+        Performs both food/non-food validation AND item detection in a single API
+        call to conserve quota and eliminate double-call inconsistencies.
+
         Raises ValueError for non-food images or unrecognisable content.
         Raises RuntimeError for API/service failures.
         """
@@ -717,27 +707,29 @@ class ProteinOptimizer:
         image = Image.open(image_path)
         logger.info(f"Sending image to Gemini ({self.gemini_model}): size={image.size}, mode={image.mode}")
 
-        prompt = """
-You are a precise food recognition AI. Your ONLY job is to identify the actual food items
-visible in this specific image and return accurate nutritional information.
+        # IMPORTANT: No food name examples in this prompt.
+        # Any food name written here (even as an example) biases the model
+        # toward returning that food regardless of what is in the photo.
+        prompt = """Look at this image carefully.
 
-STRICT RULES:
-1. ONLY name food items you can actually SEE in this photo. Do NOT guess or invent foods.
-2. If this image does NOT show food (e.g. a person, landscape, object, text), return:
-   {"not_food": true, "detected_subjects": "describe what you see"}
-3. Do NOT use example food names from any instructions. Base your answer solely on the image.
-4. Use the most specific name possible:
-   - Include cuisine type and preparation: "masala_dosa", "beef_burger", "grilled_salmon"
-   - For junk/fast food be explicit: "beef_burger_with_fries", "pepperoni_pizza_slice"
-   - For Indian food use proper names: "idli_with_sambar", "butter_chicken", "plain_dosa"
-5. Confidence must reflect how clearly visible the item is (0.9+ = clearly visible,
-   0.6-0.8 = partially visible, below 0.6 = uncertain — omit if below 0.5)
+STEP 1 — Is this a food image?
+If the image does NOT show food or a meal (e.g. it shows a person, animal, scenery,
+object, text, or anything non-edible), respond with ONLY this JSON and nothing else:
+{"not_food": true, "detected_subjects": "<describe what you actually see>"}
 
-Return ONLY valid JSON, no markdown, no explanation:
+STEP 2 — If it IS food, identify every visible food item accurately.
+Rules:
+- Name only what you can actually see. Do not invent or guess foods.
+- Use precise descriptive names that include the food type and how it is prepared.
+- Estimate realistic portion weights based on what is visible on the plate.
+- Calculate nutritional totals: total = (per_100g_value × estimated_grams) / 100
+- Confidence: 0.9+ for clearly visible items, 0.7-0.89 for partially visible, 0.5-0.69 for uncertain.
+
+Respond with ONLY this JSON and nothing else (no markdown, no explanation):
 {
     "detected_foods": [
         {
-            "name": "exact_food_name_you_can_see",
+            "name": "<descriptive food name based solely on what you see>",
             "confidence": 0.95,
             "estimated_grams": 200,
             "protein_per_100g": 17.0,
@@ -749,14 +741,14 @@ Return ONLY valid JSON, no markdown, no explanation:
             "total_calories": 590,
             "total_carbs": 48.0,
             "total_fat": 28.0,
-            "preparation_method": "fried",
-            "food_category": "junk_food"
+            "preparation_method": "<how it is cooked>",
+            "food_category": "<protein/vegetable/grain/dairy/fruit/junk_food/beverage>"
         }
     ],
     "meal_summary": {
-        "meal_type": "lunch",
-        "overall_quality": "low",
-        "health_assessment": "High in fat and calories"
+        "meal_type": "<breakfast/lunch/dinner/snack>",
+        "overall_quality": "<high/medium/low>",
+        "health_assessment": "<one sentence assessment>"
     }
 }
 """
