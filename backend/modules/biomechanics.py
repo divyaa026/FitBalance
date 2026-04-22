@@ -355,8 +355,11 @@ class BiomechanicsCoach:
             if mp_idx >= len(landmarks):
                 continue
             lm = landmarks[mp_idx]
-            # NormalizedLandmark has .presence and .visibility in Tasks API
-            confidence = float(getattr(lm, 'presence', 0.0) or getattr(lm, 'visibility', 0.0))
+            # NormalizedLandmark Tasks API: visibility = in-frame likelihood (primary)
+            # presence = in-scene likelihood (secondary fallback)
+            vis = getattr(lm, 'visibility', None)
+            pres = getattr(lm, 'presence', None)
+            confidence = float(vis if vis is not None else (pres if pres is not None else 0.0))
             frame_joints[coco_idx] = JointPosition(
                 x=float(lm.x),
                 y=float(lm.y),
