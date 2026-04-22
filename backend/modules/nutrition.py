@@ -169,58 +169,34 @@ class ProteinOptimizer:
         # Load pre-trained model (placeholder)
         self._load_model()
     
-    # Ordered list of model names to try — newest/best first
-    _GEMINI_MODEL_CANDIDATES = [
-        'gemini-2.5-flash',
-        'gemini-2.0-flash',
-        'gemini-1.5-flash',
-    ]
+    # Model to use for all Gemini calls
+    GEMINI_MODEL = 'gemini-2.0-flash'
 
     def _setup_gemini(self):
         """Setup Google Gemini AI for enhanced food detection."""
         try:
             if not GEMINI_AVAILABLE:
                 self.use_gemini = False
-                logger.warning("google-generativeai package not installed, using fallback detection")
+                logger.warning("google-generativeai package not installed, food detection disabled")
                 return
 
             api_key = os.getenv('GEMINI_API_KEY')
             if not api_key:
                 self.use_gemini = False
-                logger.warning("GEMINI_API_KEY not found, using fallback detection")
+                logger.warning("GEMINI_API_KEY not found, food detection disabled")
                 return
 
             if GEMINI_NEW_API:
                 self.gemini_client = genai.Client(api_key=api_key)
-                # Probe each candidate model with a trivial call to confirm availability
-                self.gemini_model = None
-                for candidate in self._GEMINI_MODEL_CANDIDATES:
-                    try:
-                        test_resp = self.gemini_client.models.generate_content(
-                            model=candidate,
-                            contents=[genai_types.Content(
-                                role='user',
-                                parts=[genai_types.Part.from_text(text='hi')]
-                            )]
-                        )
-                        self.gemini_model = candidate
-                        logger.info(f"Gemini AI initialised with model: {candidate}")
-                        break
-                    except Exception as probe_err:
-                        logger.warning(f"Model {candidate} unavailable: {probe_err}")
-
-                if self.gemini_model is None:
-                    self.use_gemini = False
-                    logger.warning("No Gemini model available, food detection disabled")
-                    return
+                self.gemini_model = self.GEMINI_MODEL
             else:
                 # Legacy google.generativeai package
                 genai.configure(api_key=api_key)
-                self.gemini_model = genai.GenerativeModel('gemini-1.5-flash')
                 self.gemini_client = None
-                logger.info("Gemini AI (legacy SDK) initialised with gemini-1.5-flash")
+                self.gemini_model = genai.GenerativeModel(self.GEMINI_MODEL)
 
             self.use_gemini = True
+            logger.info(f"Gemini AI initialised with model: {self.GEMINI_MODEL}")
         except Exception as e:
             self.use_gemini = False
             logger.warning(f"Could not initialise Gemini AI: {e}, food detection disabled")
