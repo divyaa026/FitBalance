@@ -237,10 +237,18 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
+    pose_backend = getattr(biomechanics_coach, 'pose_backend', 'unknown')
+    mediapipe_ready = getattr(biomechanics_coach, 'mediapipe_pose', None) is not None
+    yolo_ready = getattr(biomechanics_coach, 'yolo_model', None) is not None
     return {"status": "healthy", "modules": {
-        "biomechanics": "active (mock)",
-        "nutrition": "active (mock)", 
-        "burnout": "active (mock)"
+        "biomechanics": f"active ({pose_backend})",
+        "nutrition": "active",
+        "burnout": "active",
+    }, "pose_debug": {
+        "pose_backend": pose_backend,
+        "mediapipe_ready": mediapipe_ready,
+        "yolo_ready": yolo_ready,
+        "coach_type": type(biomechanics_coach).__name__,
     }}
 
 # Biomechanics Coaching Endpoints

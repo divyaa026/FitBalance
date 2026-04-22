@@ -209,7 +209,11 @@ class BiomechanicsCoach:
                     self.yolo_model = None
 
         except ImportError as e:
-            logger.warning(f"Ultralytics is not installed; YOLO backend unavailable: {e}")
+            logger.warning(
+                f"Ultralytics/PyTorch not installed — YOLO unavailable: {e}\n"
+                "  To enable YOLO (better accuracy): pip install ultralytics torch torchvision\n"
+                "  Falling back to MediaPipe for pose detection."
+            )
             self.yolo_model = None
         except Exception as e:
             logger.error(f"Failed to load YOLO model: {e}")
@@ -242,61 +246,25 @@ class BiomechanicsCoach:
         return existing_paths
 
     def _load_mediapipe_pose_model(self):
-        """Load MediaPipe PoseLandmarker (Tasks API) as a fallback when YOLO is unavailable.
-        
-        MediaPipe 0.10+ removed the legacy `solutions` API. The Tasks API
-        (mp.tasks.vision.PoseLandmarker) is the supported replacement.
+        """Load MediaPipe pose model using the same loader as the realtime feature.
+
+        Uses get_mediapipe_pose() from mediapipe_fitness which is proven to work
+        with MediaPipe 0.10+ Tasks API in IMAGE mode.
         """
         try:
-            import mediapipe as mp
-            from pathlib import Path as _Path
-
-            BaseOptions = mp.tasks.BaseOptions
-            PoseLandmarker = mp.tasks.vision.PoseLandmarker
-            PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
-            RunningMode = mp.tasks.vision.RunningMode
-
-            # Resolve model file — look next to this module, then the backend dir
-            module_dir = _Path(__file__).resolve().parent
-            backend_dir = module_dir.parent
-            model_candidates = [
-                module_dir / 'pose_landmarker_lite.task',
-                backend_dir / 'pose_landmarker_lite.task',
-                _Path.cwd() / 'pose_landmarker_lite.task',
-            ]
-            model_path = None
-            for candidate in model_candidates:
-                if candidate.exists():
-                    model_path = str(candidate)
-                    break
-
-            if model_path is None:
-                logger.warning(
-                    "pose_landmarker_lite.task not found — attempting auto-download..."
-                )
-                import urllib.request
-                dest = backend_dir / 'pose_landmarker_lite.task'
-                url = ('https://storage.googleapis.com/mediapipe-models/'
-                       'pose_landmarker/pose_landmarker_lite/float16/latest/'
-                       'pose_landmarker_lite.task')
-                urllib.request.urlretrieve(url, dest)
-                model_path = str(dest)
-                logger.info(f"Downloaded pose model to {dest}")
-
-            # Use IMAGE mode: stateless per-frame detection, no monotonically
-            # increasing timestamp requirement — correct for uploaded video files.
-            options = PoseLandmarkerOptions(
-                base_options=BaseOptions(model_asset_path=model_path),
-                running_mode=RunningMode.IMAGE,
-                num_poses=1,
-                min_pose_detection_confidence=0.4,
-                min_pose_presence_confidence=0.4,
+            from modules.mediapipe_fitness.utils import get_mediapipe_pose
+            self.mediapipe_pose = get_mediapipe_pose(
+                static_image_mode=True,
+                min_detection_confidence=0.4,
+                min_tracking_confidence=0.4,
             )
-            self.mediapipe_pose = PoseLandmarker.create_from_options(options)
             self.pose_backend = 'mediapipe'
-            logger.info(f"MediaPipe PoseLandmarker (IMAGE mode) initialized from {model_path}")
+            logger.info("MediaPipe pose model loaded (IMAGE mode via realtime loader)")
         except Exception as e:
-            logger.error(f"Failed to initialize MediaPipe fallback: {e}")
+            logger.error(
+                f"Failed to initialize MediaPipe: {e}\n"
+                "To fix, run: pip install mediapipe>=0.10"
+            )
             self.mediapipe_pose = None
             self.pose_backend = 'none'
 
@@ -311,24 +279,22 @@ class BiomechanicsCoach:
     def _extract_mediapipe_frame_joints(
         self, frame: np.ndarray, timestamp_ms: int = 0
     ) -> Tuple[List[JointPosition], int, float]:
-        """Extract 17-point COCO-like joints from a frame using MediaPipe PoseLandmarker.
+        """Extract 17-point COCO-like joints from a frame using MediaPipe pose.
 
-        Uses IMAGE running mode — stateless, works across multiple requests.
-        The timestamp_ms parameter is kept for signature compatibility but unused.
+        Uses the same pose model as the realtime feature (proven working).
+        timestamp_ms kept for signature compatibility but unused in IMAGE mode.
         """
         if self.mediapipe_pose is None:
             return [], 0, 0.0
 
-        import mediapipe as mp
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
-        result = self.mediapipe_pose.detect(mp_image)
+        result = self.mediapipe_pose.process(frame_rgb)
 
-        if not result.pose_landmarks or len(result.pose_landmarks) == 0:
+        if result.pose_landmarks is None:
             return [], 0, 0.0
 
-        # Tasks API returns NormalizedLandmark objects (no 'visibility', use 'presence')
-        landmarks = result.pose_landmarks[0]
+        # .landmark is the list of NormalizedLandmark objects from Tasks API
+        landmarks = result.pose_landmarks.landmark
         frame_joints = [JointPosition(x=0.0, y=0.0, z=0.0, confidence=0.0) for _ in range(17)]
 
         # Map MediaPipe 33-point landmarks → COCO-17 indices
@@ -355,8 +321,7 @@ class BiomechanicsCoach:
             if mp_idx >= len(landmarks):
                 continue
             lm = landmarks[mp_idx]
-            # NormalizedLandmark Tasks API: visibility = in-frame likelihood (primary)
-            # presence = in-scene likelihood (secondary fallback)
+            # NormalizedLandmark: visibility = in-frame likelihood
             vis = getattr(lm, 'visibility', None)
             pres = getattr(lm, 'presence', None)
             confidence = float(vis if vis is not None else (pres if pres is not None else 0.0))
