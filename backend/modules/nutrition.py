@@ -170,7 +170,7 @@ class ProteinOptimizer:
         self._load_model()
     
     # Model to use for all Gemini calls
-    GEMINI_MODEL = 'gemini-2.0-flash'
+    GEMINI_MODEL = 'gemini-2.5-flash'
 
     def _setup_gemini(self):
         """Setup Google Gemini AI for enhanced food detection."""
