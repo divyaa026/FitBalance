@@ -242,24 +242,63 @@ class BiomechanicsCoach:
         return existing_paths
 
     def _load_mediapipe_pose_model(self):
-        """Load MediaPipe pose as a fallback backend when YOLO is unavailable."""
+        """Load MediaPipe PoseLandmarker (Tasks API) as a fallback when YOLO is unavailable.
+        
+        MediaPipe 0.10+ removed the legacy `solutions` API. The Tasks API
+        (mp.tasks.vision.PoseLandmarker) is the supported replacement.
+        """
         try:
             import mediapipe as mp
+            from pathlib import Path as _Path
 
-            self.mediapipe_pose = mp.solutions.pose.Pose(
-                static_image_mode=False,
-                model_complexity=1,
-                enable_segmentation=False,
-                smooth_landmarks=True,
-                min_detection_confidence=0.4,
+            BaseOptions = mp.tasks.BaseOptions
+            PoseLandmarker = mp.tasks.vision.PoseLandmarker
+            PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
+            RunningMode = mp.tasks.vision.RunningMode
+
+            # Resolve model file — look next to this module, then the backend dir
+            module_dir = _Path(__file__).resolve().parent
+            backend_dir = module_dir.parent
+            model_candidates = [
+                module_dir / 'pose_landmarker_lite.task',
+                backend_dir / 'pose_landmarker_lite.task',
+                _Path.cwd() / 'pose_landmarker_lite.task',
+            ]
+            model_path = None
+            for candidate in model_candidates:
+                if candidate.exists():
+                    model_path = str(candidate)
+                    break
+
+            if model_path is None:
+                logger.warning(
+                    "pose_landmarker_lite.task not found — attempting auto-download..."
+                )
+                import urllib.request
+                dest = backend_dir / 'pose_landmarker_lite.task'
+                url = ('https://storage.googleapis.com/mediapipe-models/'
+                       'pose_landmarker/pose_landmarker_lite/float16/latest/'
+                       'pose_landmarker_lite.task')
+                urllib.request.urlretrieve(url, dest)
+                model_path = str(dest)
+                logger.info(f"Downloaded pose model to {dest}")
+
+            options = PoseLandmarkerOptions(
+                base_options=BaseOptions(model_asset_path=model_path),
+                running_mode=RunningMode.VIDEO,
+                num_poses=1,
+                min_pose_detection_confidence=0.4,
+                min_pose_presence_confidence=0.4,
                 min_tracking_confidence=0.4,
             )
-            self.pose_backend = "mediapipe"
-            logger.info("MediaPipe pose fallback initialized successfully")
+            self.mediapipe_pose = PoseLandmarker.create_from_options(options)
+            self.mediapipe_RunningMode = RunningMode
+            self.pose_backend = 'mediapipe'
+            logger.info(f"MediaPipe PoseLandmarker initialized from {model_path}")
         except Exception as e:
             logger.error(f"Failed to initialize MediaPipe fallback: {e}")
             self.mediapipe_pose = None
-            self.pose_backend = "none"
+            self.pose_backend = 'none'
 
     def get_pose_backend_name(self) -> str:
         """Get a display name for the active pose detection backend."""
@@ -269,25 +308,38 @@ class BiomechanicsCoach:
             return "MediaPipe"
         return "Unavailable"
 
-    def _extract_mediapipe_frame_joints(self, frame: np.ndarray) -> Tuple[List[JointPosition], int, float]:
-        """Extract 17-point COCO-like joints from a frame using MediaPipe landmarks."""
+    def _extract_mediapipe_frame_joints(
+        self, frame: np.ndarray, timestamp_ms: int = 0
+    ) -> Tuple[List[JointPosition], int, float]:
+        """Extract 17-point COCO-like joints from a frame using MediaPipe PoseLandmarker.
+
+        MediaPipe 0.10+ Tasks API: detect_for_video() requires a monotonically
+        increasing timestamp_ms.
+        """
         if self.mediapipe_pose is None:
             return [], 0, 0.0
 
+        import mediapipe as mp
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        result = self.mediapipe_pose.process(frame_rgb)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
+        result = self.mediapipe_pose.detect_for_video(mp_image, timestamp_ms)
 
-        if not result.pose_landmarks:
+        if not result.pose_landmarks or len(result.pose_landmarks) == 0:
             return [], 0, 0.0
 
-        landmarks = result.pose_landmarks.landmark
+        # Tasks API returns NormalizedLandmark objects (no 'visibility', use 'presence')
+        landmarks = result.pose_landmarks[0]
         frame_joints = [JointPosition(x=0.0, y=0.0, z=0.0, confidence=0.0) for _ in range(17)]
 
-        # Map MediaPipe 33-point landmarks to COCO-17 indices used by this module.
+        # Map MediaPipe 33-point landmarks → COCO-17 indices
         mp_to_coco = {
-            0: 0,    # nose
+            0:  0,   # nose
             11: 5,   # left shoulder
             12: 6,   # right shoulder
+            13: 7,   # left elbow
+            14: 8,   # right elbow
+            15: 9,   # left wrist
+            16: 10,  # right wrist
             23: 11,  # left hip
             24: 12,  # right hip
             25: 13,  # left knee
@@ -300,15 +352,17 @@ class BiomechanicsCoach:
         total_confidence = 0.0
 
         for mp_idx, coco_idx in mp_to_coco.items():
+            if mp_idx >= len(landmarks):
+                continue
             lm = landmarks[mp_idx]
-            confidence = float(getattr(lm, "visibility", 0.0))
+            # NormalizedLandmark has .presence and .visibility in Tasks API
+            confidence = float(getattr(lm, 'presence', 0.0) or getattr(lm, 'visibility', 0.0))
             frame_joints[coco_idx] = JointPosition(
                 x=float(lm.x),
                 y=float(lm.y),
-                z=float(lm.z),
+                z=float(getattr(lm, 'z', 0.0)),
                 confidence=confidence,
             )
-
             if coco_idx in self.key_landmark_indices and confidence >= self.MIN_POSE_CONFIDENCE:
                 key_landmarks_detected += 1
                 total_confidence += confidence
@@ -661,7 +715,7 @@ class BiomechanicsCoach:
                 else:
                     validation_info['error_message'] = "No human body detected in the image. Please upload an image showing a person performing an exercise or their workout form."
             else:
-                frame_joints, key_landmarks_detected, total_confidence = self._extract_mediapipe_frame_joints(image)
+                frame_joints, key_landmarks_detected, total_confidence = self._extract_mediapipe_frame_joints(image, timestamp_ms=0)
                 logger.info(f"Image analysis (MediaPipe): {key_landmarks_detected} key landmarks detected out of {len(self.key_landmark_indices)}")
 
                 if key_landmarks_detected >= 3 and frame_joints:
@@ -712,6 +766,7 @@ class BiomechanicsCoach:
             confidence_samples = 0
             frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
             
             while cap.isOpened():
                 ret, frame = cap.read()
@@ -719,6 +774,8 @@ class BiomechanicsCoach:
                     break
                 
                 frame_count += 1
+                # Compute monotonically increasing timestamp in milliseconds for MediaPipe Tasks API
+                timestamp_ms = int((frame_count - 1) * (1000.0 / fps))
                 
                 if self.yolo_model is not None:
                     # Run YOLO pose estimation
@@ -761,7 +818,7 @@ class BiomechanicsCoach:
                             if frame_count % 10 == 0:
                                 logger.info(f"Frame {frame_count}: {key_landmarks_detected} key landmarks detected")
                 else:
-                    frame_joints, key_landmarks_detected, frame_confidence = self._extract_mediapipe_frame_joints(frame)
+                    frame_joints, key_landmarks_detected, frame_confidence = self._extract_mediapipe_frame_joints(frame, timestamp_ms)
                     if key_landmarks_detected >= self.MIN_KEY_LANDMARKS and frame_joints:
                         valid_pose_frames += 1
                         pose_data.append(frame_joints)

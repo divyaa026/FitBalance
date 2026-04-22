@@ -28,6 +28,7 @@ yarn-error.log*
 # Large ML model files (consider Git LFS for production)
 *.h5
 *.pt
+*.task
 *.pth
 *.pkl
 *.joblib
