@@ -402,26 +402,22 @@ async def analyze_meal_photo(
                 
                 return result
             except ValueError as validation_error:
-                # Image validation failed (not a food image).
-                # Guard against transient Gemini API errors surfaced as ValueError.
-                error_msg = str(validation_error).lower()
-                is_api_outage = any(m in error_msg for m in (
-                    'unavailable', 'quota', 'high demand', 'try again', 'rate limit'
-                ))
-                if is_api_outage:
-                    # AI service is temporarily down — fall through to mock analysis
-                    logger.warning(f"Gemini service error surfaced as ValueError, falling through to mock: {validation_error}")
-                    mock_optimizer = MockProteinOptimizer()
-                    result = await mock_optimizer.analyze_meal(meal_photo, user_id, dietary_restrictions_list)
-                    result["analysis_method"] = "mock_fallback"
-                    result["fallback_reason"] = "AI meal analysis temporarily unavailable"
-                    return result
-                # Genuine rejection (non-food image)
-                logger.warning(f"Image validation failed: {validation_error}")
+                # Genuine rejection: non-food image or no food identified.
+                # ValueError is only raised for user-facing rejections — return 400.
+                logger.warning(f"Image rejected: {validation_error}")
                 raise HTTPException(
                     status_code=400,
                     detail=str(validation_error)
                 )
+            except RuntimeError as service_error:
+                # AI service temporarily unavailable — fall back to mock so the
+                # app stays usable, but tell the client it's a degraded response.
+                logger.warning(f"AI service error, using mock fallback: {service_error}")
+                mock_optimizer = MockProteinOptimizer()
+                result = await mock_optimizer.analyze_meal(meal_photo, user_id, dietary_restrictions_list)
+                result["analysis_method"] = "mock_fallback"
+                result["fallback_reason"] = str(service_error)
+                return result
             except Exception as real_error:
                 logger.error(f"Real nutrition analysis failed: {real_error}")
                 # Fallback to mock analysis

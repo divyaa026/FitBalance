@@ -169,34 +169,61 @@ class ProteinOptimizer:
         # Load pre-trained model (placeholder)
         self._load_model()
     
+    # Ordered list of model names to try — newest/best first
+    _GEMINI_MODEL_CANDIDATES = [
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+        'gemini-1.5-flash',
+    ]
+
     def _setup_gemini(self):
-        """Setup Google Gemini AI for enhanced food detection"""
+        """Setup Google Gemini AI for enhanced food detection."""
         try:
             if not GEMINI_AVAILABLE:
                 self.use_gemini = False
                 logger.warning("google-generativeai package not installed, using fallback detection")
                 return
-                
-            # Configure Gemini API (you'll need to set this environment variable)
+
             api_key = os.getenv('GEMINI_API_KEY')
-            if api_key:
-                if GEMINI_NEW_API:
-                    # New google.genai package API
-                    self.gemini_client = genai.Client(api_key=api_key)
-                    self.gemini_model = 'gemini-2.5-flash'
-                else:
-                    # Legacy google.generativeai package API
-                    genai.configure(api_key=api_key)
-                    self.gemini_model = genai.GenerativeModel('gemini-2.5-flash')
-                    self.gemini_client = None
-                self.use_gemini = True
-                logger.info("Gemini AI initialized successfully with gemini-2.5-flash")
-            else:
+            if not api_key:
                 self.use_gemini = False
                 logger.warning("GEMINI_API_KEY not found, using fallback detection")
+                return
+
+            if GEMINI_NEW_API:
+                self.gemini_client = genai.Client(api_key=api_key)
+                # Probe each candidate model with a trivial call to confirm availability
+                self.gemini_model = None
+                for candidate in self._GEMINI_MODEL_CANDIDATES:
+                    try:
+                        test_resp = self.gemini_client.models.generate_content(
+                            model=candidate,
+                            contents=[genai_types.Content(
+                                role='user',
+                                parts=[genai_types.Part.from_text(text='hi')]
+                            )]
+                        )
+                        self.gemini_model = candidate
+                        logger.info(f"Gemini AI initialised with model: {candidate}")
+                        break
+                    except Exception as probe_err:
+                        logger.warning(f"Model {candidate} unavailable: {probe_err}")
+
+                if self.gemini_model is None:
+                    self.use_gemini = False
+                    logger.warning("No Gemini model available, food detection disabled")
+                    return
+            else:
+                # Legacy google.generativeai package
+                genai.configure(api_key=api_key)
+                self.gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+                self.gemini_client = None
+                logger.info("Gemini AI (legacy SDK) initialised with gemini-1.5-flash")
+
+            self.use_gemini = True
         except Exception as e:
             self.use_gemini = False
-            logger.warning(f"Could not initialize Gemini AI: {e}, using fallback detection")
+            logger.warning(f"Could not initialise Gemini AI: {e}, food detection disabled")
     
     # Transient error substrings from the Gemini / gRPC layer
     _GEMINI_TRANSIENT_ERRORS = (
@@ -218,51 +245,51 @@ class ProteinOptimizer:
         msg = str(exc).lower()
         return any(marker in msg for marker in self._GEMINI_TRANSIENT_ERRORS)
 
-    def _pil_image_to_part(self, image: Image.Image):
-        """Convert a PIL Image to the correct Gemini API Part for the active SDK."""
-        buf = io.BytesIO()
-        # Always send as JPEG so the MIME type is unambiguous
-        rgb = image.convert('RGB') if image.mode != 'RGB' else image
-        rgb.save(buf, format='JPEG', quality=85)
-        image_bytes = buf.getvalue()
+    def _build_gemini_contents(self, contents: list):
+        """Convert a mixed list of strings and PIL Images into the correct
+        SDK-specific content structure.
 
+        New google.genai SDK requires an explicit Content(role='user', parts=[...])
+        wrapper — passing a raw list of strings/Parts is silently malformed.
+        """
         if GEMINI_NEW_API and genai_types is not None:
-            return genai_types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg')
+            parts = []
+            for item in contents:
+                if isinstance(item, Image.Image):
+                    buf = io.BytesIO()
+                    item.convert('RGB').save(buf, format='JPEG', quality=85)
+                    parts.append(genai_types.Part.from_bytes(
+                        data=buf.getvalue(), mime_type='image/jpeg'
+                    ))
+                elif isinstance(item, str):
+                    parts.append(genai_types.Part.from_text(text=item))
+                else:
+                    # Already a Part object — pass through
+                    parts.append(item)
+            return [genai_types.Content(role='user', parts=parts)]
         else:
-            # Legacy SDK accepts PIL images or inline dicts
-            import google.generativeai as _genai_legacy
-            return {'mime_type': 'image/jpeg', 'data': image_bytes}
+            # Legacy SDK accepts a flat list of strings and PIL images
+            return contents
 
     def _call_gemini(self, contents: list):
         """Call Gemini API with support for both new and legacy packages.
 
-        PIL Image objects in `contents` are automatically converted to the
-        correct binary Part for whichever SDK is active.  This ensures the
-        image is actually transmitted instead of being silently ignored.
-
         Raises the original exception on transient service errors so callers
         can distinguish them from malformed-response errors.
         """
-        # Normalise contents: replace PIL Images with SDK-native Part objects
-        normalised = []
-        for item in contents:
-            if isinstance(item, Image.Image):
-                normalised.append(self._pil_image_to_part(item))
-            else:
-                normalised.append(item)
-
+        structured = self._build_gemini_contents(contents)
         try:
             if GEMINI_NEW_API:
                 response = self.gemini_client.models.generate_content(
                     model=self.gemini_model,
-                    contents=normalised
+                    contents=structured
                 )
                 return response
             else:
-                return self.gemini_model.generate_content(normalised)
+                return self.gemini_model.generate_content(structured)
         except Exception as e:
             if self._is_gemini_transient_error(e):
-                logger.warning(f"Gemini API transient error (will fall back to mock): {e}")
+                logger.warning(f"Gemini API transient error: {e}")
             raise
     
     def _load_food_database(self) -> Dict:
@@ -441,63 +468,29 @@ class ProteinOptimizer:
             raise
     
     def _detect_foods(self, image_path: str) -> List[FoodItem]:
-        """Detect foods in image using Gemini Vision API and CNN-GRU model"""
-        try:
-            # Try Gemini AI first for better accuracy
-            if self.use_gemini:
-                logger.info("Using Gemini Vision API for food detection")
-                detected_foods = self._detect_foods_with_gemini(image_path)
-                if detected_foods:  # If Gemini returns results, use them
-                    logger.info(f"Gemini successfully detected {len(detected_foods)} foods")
-                    return detected_foods
-                else:
-                    logger.warning("Gemini returned empty results, falling back to mock detection")
-            else:
-                logger.info("Gemini disabled, using mock detection")
-            
-            # Fallback to mock detection with realistic nutrition values
-            logger.info("Using mock food detection with database lookup")
-            detected_foods = self._mock_food_detection(image_path)
-            
-            # Ensure all foods have nutrition data from database
-            for food in detected_foods:
-                if food.protein_content == 0 or food.calories == 0:
-                    logger.warning(f"Food {food.name} has zero nutrition, looking up in database...")
-                    nutrition = nutrition_db.get_food_nutrition(food.name)
-                    if nutrition:
-                        # Calculate based on serving size
-                        serving_g = 100  # default
-                        if food.serving_size and 'g' in food.serving_size:
-                            try:
-                                serving_g = int(food.serving_size.replace('g', ''))
-                            except:
-                                pass
-                        
-                        food.protein_content = round((nutrition['protein'] * serving_g) / 100, 1)
-                        food.calories = int((nutrition['calories'] * serving_g) / 100)
-                        logger.info(f"Updated {food.name}: {food.protein_content}g protein, {food.calories} cal")
-            
-            return detected_foods
-            
-        except Exception as e:
-            logger.error(f"Food detection error: {e}")
-            logger.info("Falling back to mock detection with database lookup")
-            detected_foods = self._mock_food_detection(image_path)
-            
-            # Ensure nutrition data
-            for food in detected_foods:
-                if food.protein_content == 0 or food.calories == 0:
-                    nutrition = nutrition_db.get_food_nutrition(food.name)
-                    if nutrition:
-                        serving_g = 100
-                        if food.serving_size and 'g' in food.serving_size:
-                            try:
-                                serving_g = int(food.serving_size.replace('g', ''))
-                            except:
-                                pass
-                        food.protein_content = round((nutrition['protein'] * serving_g) / 100, 1)
-                        food.calories = int((nutrition['calories'] * serving_g) / 100)
-            
+        """Detect foods in image using Gemini Vision API.
+
+        Never falls back to random mock detection — if Gemini is unavailable or
+        returns no food, a ValueError is raised so the caller can inform the user.
+        """
+        if not self.use_gemini:
+            raise ValueError(
+                "Food analysis is temporarily unavailable (AI service not configured). "
+                "Please try again later."
+            )
+
+        logger.info("Using Gemini Vision API for food detection")
+        detected_foods = self._detect_foods_with_gemini(image_path)
+
+        if not detected_foods:
+            raise ValueError(
+                "No food items could be identified in this image. "
+                "Please upload a clear photo of your meal."
+            )
+
+        logger.info(f"Gemini detected {len(detected_foods)} food item(s)")
+        return detected_foods
+
             return detected_foods
     
     def _basic_food_check(self, image_path: str) -> Tuple[bool, str]:
@@ -713,206 +706,151 @@ class ProteinOptimizer:
         return False, "Unable to validate image"
     
     def _detect_foods_with_gemini(self, image_path: str) -> List[FoodItem]:
-        """Use Gemini Vision API to detect and analyze foods in the image"""
+        """Use Gemini Vision API to detect and analyse foods in the image.
+
+        Raises ValueError for non-food images or unrecognisable content.
+        Raises RuntimeError for API/service failures.
+        """
         if not GEMINI_AVAILABLE:
-            logger.warning("Gemini not available - google-generativeai package not installed")
-            return []
-            
+            raise RuntimeError("Gemini package not installed")
+
+        image = Image.open(image_path)
+        logger.info(f"Sending image to Gemini ({self.gemini_model}): size={image.size}, mode={image.mode}")
+
+        prompt = """
+You are a precise food recognition AI. Your ONLY job is to identify the actual food items
+visible in this specific image and return accurate nutritional information.
+
+STRICT RULES:
+1. ONLY name food items you can actually SEE in this photo. Do NOT guess or invent foods.
+2. If this image does NOT show food (e.g. a person, landscape, object, text), return:
+   {"not_food": true, "detected_subjects": "describe what you see"}
+3. Do NOT use example food names from any instructions. Base your answer solely on the image.
+4. Use the most specific name possible:
+   - Include cuisine type and preparation: "masala_dosa", "beef_burger", "grilled_salmon"
+   - For junk/fast food be explicit: "beef_burger_with_fries", "pepperoni_pizza_slice"
+   - For Indian food use proper names: "idli_with_sambar", "butter_chicken", "plain_dosa"
+5. Confidence must reflect how clearly visible the item is (0.9+ = clearly visible,
+   0.6-0.8 = partially visible, below 0.6 = uncertain — omit if below 0.5)
+
+Return ONLY valid JSON, no markdown, no explanation:
+{
+    "detected_foods": [
+        {
+            "name": "exact_food_name_you_can_see",
+            "confidence": 0.95,
+            "estimated_grams": 200,
+            "protein_per_100g": 17.0,
+            "calories_per_100g": 295,
+            "carbs_per_100g": 24.0,
+            "fat_per_100g": 14.0,
+            "fiber_per_100g": 1.0,
+            "total_protein": 34.0,
+            "total_calories": 590,
+            "total_carbs": 48.0,
+            "total_fat": 28.0,
+            "preparation_method": "fried",
+            "food_category": "junk_food"
+        }
+    ],
+    "meal_summary": {
+        "meal_type": "lunch",
+        "overall_quality": "low",
+        "health_assessment": "High in fat and calories"
+    }
+}
+"""
+
         try:
-            # Load and prepare image for Gemini
-            image = Image.open(image_path)
-            
-            logger.info(f"Sending image to Gemini: size={image.size}, mode={image.mode}")
-            
-            # Create the prompt for detailed food analysis
-            prompt = """
-            You are an expert nutritionist and food recognition AI with extensive knowledge of food portions and nutritional values. 
-            Analyze this meal image with high precision.
+            response = self._call_gemini([prompt, image])
+            logger.info(f"Gemini API response received")
+        except Exception as api_error:
+            logger.error(f"Gemini API call failed ({type(api_error).__name__}): {api_error}")
+            if self._is_gemini_transient_error(api_error):
+                self.use_gemini = False
+                raise RuntimeError(
+                    "Food analysis service is temporarily unavailable due to high demand. "
+                    "Please try again in a moment."
+                ) from api_error
+            raise RuntimeError(f"Food analysis failed: {api_error}") from api_error
 
-            CRITICAL INSTRUCTIONS:
-            
-            1. FOOD IDENTIFICATION:
-               - Identify ALL visible food items (main dishes, sides, toppings, sauces, chutneys, accompaniments)
-               - Use descriptive names with preparation method (e.g., "grilled_chicken_breast", "masala_dosa", "idli_sambar")
-               - Be specific about unhealthy items: if it's fried, breaded, fast food, or junk food, include that in the name
-               - Confidence: 0.9-1.0 for clear items, 0.6-0.8 for partially visible, below 0.6 for uncertain
-            
-            2. INTERNATIONAL CUISINE RECOGNITION (CRITICAL):
-               - INDIAN SOUTH: dosa, masala_dosa, idli, sambar, coconut_chutney, uttapam, medu_vada, upma, pongal, rava_dosa, appam
-               - INDIAN NORTH: roti, chapati, naan, paratha, aloo_paratha, paneer_tikka, palak_paneer, butter_chicken, dal_tadka, dal_makhani, rajma, chole, biryani, tandoori_chicken, samosa, pakora
-               - CHINESE/ASIAN: fried_rice, noodles, momos, spring_roll, manchurian, dim_sum, sushi, ramen, pad_thai
-               - MIDDLE EASTERN: hummus, falafel, shawarma, kebab, pita_bread
-               - MEXICAN: tacos, burrito, quesadilla, guacamole
-               - Always use the proper cuisine-specific name, NOT generic Western equivalents
-               
-            3. PORTION ESTIMATION (CRITICAL):
-               - Use realistic visual portion sizes based on plate size and food density
-               - Typical portions: dosa (1 piece ~100-120g), idli (1 piece ~40g), roti (1 piece ~30g), biryani (200-300g)
-               - Western portions: chicken breast (150-200g), burger (200-250g), pizza slice (120-150g)
-               - Account for actual visible amount, not standard servings
-            
-            4. NUTRITIONAL CALCULATION (MUST BE ACCURATE):
-               - First determine per-100g values from your nutritional database
-               - Then calculate TOTAL values based on estimated_grams: total = (per_100g * estimated_grams) / 100
-               - Include ALL macros: protein, carbs (including sugars), fat (including saturated fat), fiber
-               - For composite dishes (biryani, dosa with sambar), break down ingredients and sum their nutrition
-            
-            5. FOOD TYPE AWARENESS:
-               - Junk/Fast Food: pizza, burgers, fries, chips, donuts, candy, soda → Use names like "cheese_pizza", "french_fries", "chocolate_donut"
-               - Healthy Foods: grilled proteins, vegetables, whole grains → Use names like "grilled_salmon", "steamed_broccoli", "quinoa"
-               - Preparation matters: "fried_chicken" vs "grilled_chicken", "white_rice" vs "brown_rice"
-               - Indian healthy: idli, dosa (fermented, lighter), dal, roti
-               - Indian rich: butter_chicken, dal_makhani, paratha (ghee-based)
-            
-            Return ONLY this JSON (no markdown, no extra text):
-            {
-                "detected_foods": [
-                    {
-                        "name": "food_name_with_preparation",
-                        "confidence": 0.95,
-                        "estimated_grams": 180,
-                        "protein_per_100g": 31.0,
-                        "calories_per_100g": 165,
-                        "carbs_per_100g": 0.5,
-                        "fat_per_100g": 3.6,
-                        "fiber_per_100g": 0.0,
-                        "total_protein": 55.8,
-                        "total_calories": 297,
-                        "total_carbs": 0.9,
-                        "total_fat": 6.5,
-                        "preparation_method": "grilled/fried/baked/steamed/raw",
-                        "food_category": "protein/vegetable/grain/junk_food/fruit",
-                        "visual_description": "Brief visual description"
-                    }
-                ],
-                "meal_summary": {
-                    "total_items": 3,
-                    "meal_type": "breakfast/lunch/dinner/snack",
-                    "overall_quality": "high/medium/low",
-                    "health_assessment": "Brief assessment (e.g., 'Balanced meal' or 'High in processed foods')",
-                    "notes": "Any additional observations"
-                }
-            }
+        if not response or not response.text:
+            raise RuntimeError("Gemini returned an empty response. Please try again.")
 
-            VALIDATION CHECKS:
-            - total_protein = (protein_per_100g × estimated_grams) ÷ 100
-            - total_calories = (calories_per_100g × estimated_grams) ÷ 100
-            - total_carbs = (carbs_per_100g × estimated_grams) ÷ 100
-            - total_fat = (fat_per_100g × estimated_grams) ÷ 100
-            - If image has NO food, return {"detected_foods": [], "meal_summary": {"notes": "No food detected"}}
-            """
-            
-            # Call Gemini Vision API
-            try:
-                response = self._call_gemini([prompt, image])
-                logger.info(f"Gemini API response received: {response}")
-            except Exception as api_error:
-                logger.error(f"Gemini API call failed: {api_error}")
-                logger.error(f"Error type: {type(api_error).__name__}")
-                if self._is_gemini_transient_error(api_error):
-                    # Disable Gemini for this session so subsequent calls
-                    # fall straight to mock detection without retrying.
-                    self.use_gemini = False
-                    logger.warning("Gemini disabled for this session due to service unavailability")
-                return []
-            
-            if response and response.text:
-                # Parse the JSON response
-                response_text = response.text.strip()
-                
-                # Extract JSON from response (sometimes Gemini adds markdown formatting)
-                if "```json" in response_text:
-                    json_start = response_text.find("```json") + 7
-                    json_end = response_text.find("```", json_start)
-                    response_text = response_text[json_start:json_end]
-                elif "```" in response_text:
-                    json_start = response_text.find("```") + 3
-                    json_end = response_text.rfind("```")
-                    response_text = response_text[json_start:json_end]
-                
-                try:
-                    gemini_result = json.loads(response_text)
-                    detected_foods = []
-                    
-                    logger.info(f"Gemini raw response: {json.dumps(gemini_result, indent=2)}")
-                    
-                    for food_data in gemini_result.get("detected_foods", []):
-                        # Extract nutrition data from the detailed Gemini response
-                        estimated_grams = float(food_data.get("estimated_grams", 100))
-                        
-                        # Get total nutrition values (already calculated by Gemini for the portion)
-                        total_protein = float(food_data.get("total_protein", 0.0))
-                        total_calories = int(food_data.get("total_calories", 0))
-                        total_carbs = float(food_data.get("total_carbs", 0.0))
-                        total_fat = float(food_data.get("total_fat", 0.0))
-                        total_fiber = float(food_data.get("total_fiber", 0.0))
-                        
-                        # If Gemini didn't provide totals, calculate from per-100g values
-                        if total_protein == 0 and "protein_per_100g" in food_data:
-                            protein_per_100g = float(food_data.get("protein_per_100g", 0))
-                            total_protein = (protein_per_100g * estimated_grams) / 100.0
-                        
-                        if total_calories == 0 and "calories_per_100g" in food_data:
-                            calories_per_100g = int(food_data.get("calories_per_100g", 0))
-                            total_calories = int((calories_per_100g * estimated_grams) / 100.0)
-                        
-                        if total_carbs == 0 and "carbs_per_100g" in food_data:
-                            carbs_per_100g = float(food_data.get("carbs_per_100g", 0))
-                            total_carbs = (carbs_per_100g * estimated_grams) / 100.0
-                        
-                        if total_fat == 0 and "fat_per_100g" in food_data:
-                            fat_per_100g = float(food_data.get("fat_per_100g", 0))
-                            total_fat = (fat_per_100g * estimated_grams) / 100.0
-                        
-                        if total_fiber == 0 and "fiber_per_100g" in food_data:
-                            fiber_per_100g = float(food_data.get("fiber_per_100g", 0))
-                            total_fiber = (fiber_per_100g * estimated_grams) / 100.0
-                        
-                        # Fallback to old format for backward compatibility
-                        if total_protein == 0:
-                            total_protein = float(food_data.get("protein_content", 0.0))
-                        if total_calories == 0:
-                            total_calories = int(food_data.get("calories", 0))
-                        
-                        serving_size = f"{int(estimated_grams)}g"
-                        if "serving_size" in food_data:
-                            serving_size = food_data["serving_size"]
-                        
-                        # Create FoodItem objects from Gemini response with full nutrition data
-                        food_item = FoodItem(
-                            name=food_data.get("name", "unknown_food"),
-                            confidence=float(food_data.get("confidence", 0.5)),
-                            protein_content=round(total_protein, 1),
-                            calories=total_calories,
-                            serving_size=serving_size,
-                            bounding_box=(0, 0, 100, 100),  # Gemini doesn't provide bounding boxes
-                            carbs=round(total_carbs, 1),
-                            fat=round(total_fat, 1),
-                            fiber=round(total_fiber, 1)
-                        )
-                        detected_foods.append(food_item)
-                        
-                        logger.info(f"Parsed food from Gemini: {food_item.name}")
-                        logger.info(f"  Nutrition: {food_item.protein_content}g protein, {food_item.carbs}g carbs, {food_item.fat}g fat, {food_item.calories} cal")
-                        logger.info(f"  Confidence: {food_item.confidence:.2f}, Serving: {food_item.serving_size}")
-                    
-                    if detected_foods:
-                        meal_summary = gemini_result.get("meal_summary", {})
-                        logger.info(f"Gemini detected {len(detected_foods)} foods. Meal summary: {meal_summary}")
-                        return detected_foods
-                    else:
-                        logger.warning("Gemini response contained no food items")
-                        
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse Gemini JSON response: {e}")
-                    logger.debug(f"Raw response: {response_text}")
-            else:
-                logger.warning("Gemini API returned empty response")
-                
-        except Exception as e:
-            logger.error(f"Gemini food detection error: {e}")
-        
-        return []  # Return empty list if Gemini fails
+        response_text = response.text.strip()
+        logger.info(f"Gemini raw response text: {response_text[:500]}")
+
+        # Strip markdown code fences if present
+        if "```json" in response_text:
+            json_start = response_text.find("```json") + 7
+            json_end = response_text.find("```", json_start)
+            response_text = response_text[json_start:json_end]
+        elif "```" in response_text:
+            json_start = response_text.find("```") + 3
+            json_end = response_text.rfind("```")
+            response_text = response_text[json_start:json_end]
+
+        try:
+            gemini_result = json.loads(response_text.strip())
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse Gemini JSON: {e} | raw: {response_text[:300]}")
+            raise RuntimeError("Unexpected response from food analysis service. Please try again.") from e
+
+        # Gemini explicitly flagged this as not food
+        if gemini_result.get("not_food"):
+            detected = gemini_result.get("detected_subjects", "non-food content")
+            raise ValueError(
+                f"This image does not appear to contain food ({detected}). "
+                "Please upload a photo of your meal."
+            )
+
+        detected_foods = []
+        for food_data in gemini_result.get("detected_foods", []):
+            estimated_grams = float(food_data.get("estimated_grams", 100))
+
+            total_protein = float(food_data.get("total_protein", 0.0))
+            total_calories = int(food_data.get("total_calories", 0))
+            total_carbs = float(food_data.get("total_carbs", 0.0))
+            total_fat = float(food_data.get("total_fat", 0.0))
+            total_fiber = float(food_data.get("total_fiber", 0.0))
+
+            # Calculate totals from per-100g values if not already provided
+            if total_protein == 0 and "protein_per_100g" in food_data:
+                total_protein = float(food_data["protein_per_100g"]) * estimated_grams / 100.0
+            if total_calories == 0 and "calories_per_100g" in food_data:
+                total_calories = int(float(food_data["calories_per_100g"]) * estimated_grams / 100.0)
+            if total_carbs == 0 and "carbs_per_100g" in food_data:
+                total_carbs = float(food_data["carbs_per_100g"]) * estimated_grams / 100.0
+            if total_fat == 0 and "fat_per_100g" in food_data:
+                total_fat = float(food_data["fat_per_100g"]) * estimated_grams / 100.0
+            if total_fiber == 0 and "fiber_per_100g" in food_data:
+                total_fiber = float(food_data["fiber_per_100g"]) * estimated_grams / 100.0
+
+            food_item = FoodItem(
+                name=food_data.get("name", "unknown_food"),
+                confidence=float(food_data.get("confidence", 0.5)),
+                protein_content=round(total_protein, 1),
+                calories=total_calories,
+                serving_size=food_data.get("serving_size", f"{int(estimated_grams)}g"),
+                bounding_box=(0, 0, 100, 100),
+                carbs=round(total_carbs, 1),
+                fat=round(total_fat, 1),
+                fiber=round(total_fiber, 1)
+            )
+            detected_foods.append(food_item)
+            logger.info(
+                f"  {food_item.name}: {food_item.protein_content}g protein, "
+                f"{food_item.carbs}g carbs, {food_item.fat}g fat, {food_item.calories} cal "
+                f"(conf {food_item.confidence:.2f})"
+            )
+
+        if detected_foods:
+            logger.info(f"Gemini detected {len(detected_foods)} food item(s)")
+        else:
+            logger.warning("Gemini response contained no food items")
+
+        return detected_foods
+
     
     def _mock_food_detection(self, image_path: str) -> List[FoodItem]:
         """Enhanced mock food detection for testing (simulates Gemini-quality results)"""
